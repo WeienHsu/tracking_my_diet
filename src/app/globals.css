@@ -1,4 +1,5 @@
-@import "tailwindcss";
+/* 將 class 偵測範圍限定在 src/，避免掃進 kanban_task 等專案外的 symlink。 */
+@import "tailwindcss" source("../");
 
 :root {
   --background: #ffffff;

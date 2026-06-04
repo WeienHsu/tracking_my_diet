@@ -39,3 +39,20 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Obsidian 筆記連結（指向本機 vault 的絕對路徑，不可進 git）
+/kanban_task
+
+# Python 虛擬環境
+/.venv
+
+# AI 工具的個人指示檔（指向 repo 外的 ../CLAUDE.md，上傳會變壞掉的連結）
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
+
+# macOS
+.DS_Store
+
+# 個人開發計劃 / 筆記，不上傳
+/PROJECT_PLAN.md
