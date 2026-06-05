@@ -16,6 +16,26 @@ export default async function Home() {
           <p className="text-sm text-zinc-600">
             已登入：<strong>{user.email}</strong>
           </p>
+          <div className="flex gap-3">
+            <Link
+              href="/log"
+              className="flex h-12 items-center rounded-lg bg-black px-6 text-base font-medium text-white"
+            >
+              記錄一餐
+            </Link>
+            <Link
+              href="/history"
+              className="flex h-12 items-center rounded-lg border border-zinc-300 px-6 text-base font-medium"
+            >
+              歷史紀錄
+            </Link>
+            <Link
+              href="/analysis"
+              className="flex h-12 items-center rounded-lg border border-zinc-300 px-6 text-base font-medium"
+            >
+              分析
+            </Link>
+          </div>
           <form action="/auth/signout" method="post">
             <button
               type="submit"
