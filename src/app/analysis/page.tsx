@@ -10,6 +10,7 @@ import {
 } from "@/lib/analysis";
 import type { Settings } from "@/lib/types";
 import Charts from "./Charts";
+import MonthlyReport from "./MonthlyReport";
 
 // 設定預設值（見 PROJECT_PLAN.md Section 4）。
 const DEFAULT_SETTINGS: Settings = {
@@ -163,6 +164,9 @@ export default async function AnalysisPage() {
             }}
             impact={impactData}
           />
+
+          {/* AI 月報（client → /api/report → Gemini）*/}
+          <MonthlyReport />
         </>
       )}
     </main>
