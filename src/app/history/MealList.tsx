@@ -1,0 +1,147 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { MEAL_TYPE_LABELS } from "@/lib/types";
+import type { MealWithFoods } from "@/lib/repositories/meals";
+import { fillGlucoseAfterAction, deleteMealAction } from "./actions";
+
+export default function MealList({ meals }: { meals: MealWithFoods[] }) {
+  if (meals.length === 0) {
+    return (
+      <p className="py-12 text-center text-sm text-zinc-400">
+        沒有符合的紀錄。
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-3">
+      {meals.map((m) => (
+        <MealCard key={m.id} meal={m} />
+      ))}
+    </ul>
+  );
+}
+
+function MealCard({ meal }: { meal: MealWithFoods }) {
+  const [pending, startTransition] = useTransition();
+  const [after, setAfter] = useState("");
+
+  const rise =
+    meal.glucose_before != null && meal.glucose_after != null
+      ? meal.glucose_after - meal.glucose_before
+      : null;
+
+  function saveAfter() {
+    const v = Number(after);
+    if (!Number.isFinite(v) || v <= 0) return;
+    startTransition(() => fillGlucoseAfterAction(meal.id, v));
+  }
+
+  function onDelete() {
+    if (!confirm("確定刪除這筆紀錄？")) return;
+    startTransition(() => deleteMealAction(meal.id));
+  }
+
+  return (
+    <li className="flex flex-col gap-2 rounded-xl border border-zinc-200 p-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+            {MEAL_TYPE_LABELS[meal.meal_type]}
+          </span>
+          <span className="ml-2 text-sm text-zinc-500">
+            {formatTime(meal.eaten_at)}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={pending}
+          aria-label="刪除"
+          className="text-sm text-zinc-400 disabled:opacity-50"
+        >
+          刪除
+        </button>
+      </div>
+
+      {/* 食物 */}
+      <p className="text-sm text-zinc-700">
+        {meal.meal_foods.length > 0
+          ? meal.meal_foods
+              .map((f) => (f.quantity > 1 ? `${f.food_name}×${f.quantity}` : f.food_name))
+              .join("、")
+          : "—"}
+      </p>
+
+      {/* 數據 */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+        <Row label="碳水" value={`${round1(meal.total_carbs)} g`} />
+        <Row label="施打" value={`${round1(meal.insulin_units)} 單位`} />
+        <Row
+          label="餐前血糖"
+          value={meal.glucose_before != null ? `${meal.glucose_before}` : "—"}
+        />
+        <Row
+          label="餐後血糖"
+          value={meal.glucose_after != null ? `${meal.glucose_after}` : "—"}
+        />
+      </div>
+
+      {rise != null && (
+        <p className="text-sm text-zinc-500">
+          血糖變化：
+          <span className={rise > 0 ? "text-amber-700" : "text-green-700"}>
+            {rise > 0 ? `+${rise}` : rise}
+          </span>{" "}
+          mg/dL
+        </p>
+      )}
+
+      {meal.note && <p className="text-xs text-zinc-400">備註：{meal.note}</p>}
+
+      {/* 餐後血糖補填 */}
+      {meal.glucose_after == null && (
+        <div className="mt-1 flex gap-2">
+          <input
+            type="number"
+            inputMode="numeric"
+            value={after}
+            onChange={(e) => setAfter(e.target.value)}
+            placeholder="補填餐後血糖"
+            className="h-11 flex-1 rounded-lg border border-zinc-300 px-3 text-sm"
+          />
+          <button
+            type="button"
+            onClick={saveAfter}
+            disabled={pending || after === ""}
+            className="h-11 shrink-0 rounded-lg bg-black px-4 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {pending ? "…" : "補填"}
+          </button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-zinc-500">{label}</span>
+      <span className="font-medium text-zinc-800">{value}</span>
+    </div>
+  );
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleString("zh-TW", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
