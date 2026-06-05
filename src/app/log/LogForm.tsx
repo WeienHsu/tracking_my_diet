@@ -2,22 +2,18 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MEAL_TYPE_LABELS, type MealType } from "@/lib/types";
+import {
+  MEAL_TYPE_LABELS,
+  mealTypeForHour,
+  type MealType,
+  type MealRange,
+} from "@/lib/types";
 import { createMealAction } from "./actions";
 
 type FoodOption = { name: string; carbs_per_serving: number };
 type FoodLine = { name: string; carbs: string; quantity: string };
 
 const MEAL_TYPES = Object.keys(MEAL_TYPE_LABELS) as MealType[];
-
-// 以目前時段預設餐別，加快記錄。
-function defaultMealType(): MealType {
-  const h = new Date().getHours();
-  if (h < 11) return "breakfast";
-  if (h < 16) return "lunch";
-  if (h < 21) return "dinner";
-  return "snack";
-}
 
 // 現在時間格式化為 <input type="datetime-local"> 需要的本地字串。
 function nowLocalInput(): string {
@@ -27,19 +23,23 @@ function nowLocalInput(): string {
 }
 
 const inputClass =
-  "h-12 w-full rounded-lg border border-zinc-300 px-3 text-base outline-none focus:border-zinc-500";
+  "h-12 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-base outline-none focus:border-zinc-500";
 
 export default function LogForm({
   foods,
   icr,
+  mealRange,
 }: {
   foods: FoodOption[];
   icr: number;
+  mealRange: MealRange;
 }) {
   const router = useRouter();
 
   const [eatenAt, setEatenAt] = useState(nowLocalInput);
-  const [mealType, setMealType] = useState<MealType>(defaultMealType);
+  const [mealType, setMealType] = useState<MealType>(() =>
+    mealTypeForHour(new Date().getHours(), mealRange),
+  );
   const [glucoseBefore, setGlucoseBefore] = useState("");
   const [foodLines, setFoodLines] = useState<FoodLine[]>([
     { name: "", carbs: "", quantity: "1" },
@@ -174,8 +174,8 @@ export default function LogForm({
               onClick={() => setMealType(t)}
               className={`h-12 rounded-lg border text-base ${
                 mealType === t
-                  ? "border-black bg-black text-white"
-                  : "border-zinc-300 bg-white text-zinc-700"
+                  ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
+                  : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200"
               }`}
             >
               {MEAL_TYPE_LABELS[t]}
@@ -207,7 +207,7 @@ export default function LogForm({
           {foodLines.map((line, i) => (
             <div
               key={i}
-              className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2"
+              className="flex flex-col gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 p-2"
             >
               <div className="flex gap-2">
                 <input
@@ -221,14 +221,14 @@ export default function LogForm({
                   type="button"
                   onClick={() => removeLine(i)}
                   aria-label="移除這項食物"
-                  className="h-12 w-12 shrink-0 rounded-lg border border-zinc-300 text-xl text-zinc-500"
+                  className="h-12 w-12 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 text-xl text-zinc-500 dark:text-zinc-400"
                 >
                   ×
                 </button>
               </div>
               <div className="flex gap-2">
                 <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs text-zinc-500">碳水（克）</span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">碳水（克）</span>
                   <input
                     type="number"
                     inputMode="decimal"
@@ -240,7 +240,7 @@ export default function LogForm({
                   />
                 </label>
                 <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs text-zinc-500">份數</span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">份數</span>
                   <input
                     type="number"
                     inputMode="numeric"
@@ -258,28 +258,28 @@ export default function LogForm({
         <button
           type="button"
           onClick={addLine}
-          className="mt-2 h-11 rounded-lg border border-dashed border-zinc-400 text-sm text-zinc-600"
+          className="mt-2 h-11 rounded-lg border border-dashed border-zinc-400 dark:border-zinc-600 text-sm text-zinc-600 dark:text-zinc-300"
         >
           ＋ 新增食物
         </button>
-        <p className="mt-1 text-xs text-zinc-400">
+        <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
           庫裡已有的食物，選到後會自動帶入碳水。
         </p>
       </Field>
 
       {/* 加總與建議劑量 */}
-      <div className="rounded-xl bg-zinc-50 p-4">
+      <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800 p-4">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-zinc-600">總碳水</span>
+          <span className="text-zinc-600 dark:text-zinc-300">總碳水</span>
           <span className="text-lg font-semibold">{round1(totalCarbs)} g</span>
         </div>
         <div className="mt-2 flex items-center justify-between text-sm">
-          <span className="text-zinc-600">建議劑量（碳水 ÷ ICR {icr}）</span>
+          <span className="text-zinc-600 dark:text-zinc-300">建議劑量（碳水 ÷ ICR {icr}）</span>
           <span className="text-lg font-semibold">
             {round1(suggestedDose)} 單位
           </span>
         </div>
-        <p className="mt-2 text-xs leading-5 text-amber-700">
+        <p className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-400">
           ⚠️ 建議劑量僅供參考、由碳水自動換算，<strong>不可取代專業醫療判斷</strong>
           。實際施打請依你的醫師／糖尿病衛教師指示。
         </p>
@@ -328,7 +328,7 @@ export default function LogForm({
       {message && (
         <p
           className={`text-sm ${
-            message.type === "ok" ? "text-green-600" : "text-red-600"
+            message.type === "ok" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
           }`}
         >
           {message.text}
@@ -338,7 +338,7 @@ export default function LogForm({
       <button
         type="submit"
         disabled={submitting}
-        className="h-14 rounded-xl bg-black text-lg font-medium text-white disabled:opacity-50"
+        className="h-14 rounded-xl bg-black dark:bg-white text-lg font-medium text-white dark:text-black disabled:opacity-50"
       >
         {submitting ? "記錄中…" : "記錄這一餐"}
       </button>
@@ -355,7 +355,7 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-sm font-medium text-zinc-700">{label}</span>
+      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{label}</span>
       {children}
     </label>
   );

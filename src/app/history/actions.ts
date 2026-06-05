@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   updateGlucoseAfter,
+  updateMeal,
   deleteMeal,
   searchMealFoodHistory,
 } from "@/lib/repositories/meals";
@@ -20,6 +21,18 @@ export async function fillGlucoseAfterAction(mealId: string, value: number) {
   if (!user) redirect("/login");
 
   await updateGlucoseAfter(supabase, mealId, value);
+  revalidatePath("/history");
+}
+
+// 編輯飯前血糖（記錄當下可能漏填或填錯）。
+export async function updateGlucoseBeforeAction(mealId: string, value: number) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  await updateMeal(supabase, mealId, { glucose_before: value });
   revalidatePath("/history");
 }
 

@@ -58,3 +58,6 @@ next-env.d.ts
 
 # 個人開發計劃 / 筆記，不上傳
 /PROJECT_PLAN.md
+
+# 改進計劃文件（給人看的計劃），不上傳
+/docs/

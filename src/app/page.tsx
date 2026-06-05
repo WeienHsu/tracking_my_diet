@@ -13,44 +13,55 @@ export default async function Home() {
 
       {user ? (
         <div className="flex flex-col items-center gap-4">
-          <p className="text-sm text-zinc-600">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
             已登入：<strong>{user.email}</strong>
           </p>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap justify-center gap-3">
             <Link
               href="/log"
-              className="flex h-12 items-center rounded-lg bg-black px-6 text-base font-medium text-white"
+              className="flex h-12 items-center rounded-lg bg-black dark:bg-white px-6 text-base font-medium text-white dark:text-black"
             >
               記錄一餐
             </Link>
             <Link
               href="/history"
-              className="flex h-12 items-center rounded-lg border border-zinc-300 px-6 text-base font-medium"
+              className="flex h-12 items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-6 text-base font-medium"
             >
               歷史紀錄
             </Link>
             <Link
               href="/analysis"
-              className="flex h-12 items-center rounded-lg border border-zinc-300 px-6 text-base font-medium"
+              className="flex h-12 items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-6 text-base font-medium"
             >
               分析
             </Link>
-          </div>
-          <form action="/auth/signout" method="post">
-            <button
-              type="submit"
-              className="h-11 rounded-lg border border-zinc-300 px-5 text-sm font-medium"
+            <Link
+              href="/a1c"
+              className="flex h-12 items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-6 text-base font-medium"
             >
-              登出
-            </button>
-          </form>
+              A1C
+            </Link>
+          </div>
+          <div className="flex items-center gap-4">
+            <Link href="/settings" className="text-sm text-zinc-600 dark:text-zinc-300 underline">
+              設定
+            </Link>
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="h-11 rounded-lg border border-zinc-300 dark:border-zinc-700 px-5 text-sm font-medium"
+              >
+                登出
+              </button>
+            </form>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col items-center gap-4">
-          <p className="text-sm text-zinc-600">尚未登入。</p>
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">尚未登入。</p>
           <Link
             href="/login"
-            className="flex h-11 items-center rounded-lg bg-black px-5 text-sm font-medium text-white"
+            className="flex h-11 items-center rounded-lg bg-black dark:bg-white px-5 text-sm font-medium text-white dark:text-black"
           >
             前往登入
           </Link>

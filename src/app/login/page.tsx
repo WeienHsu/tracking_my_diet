@@ -30,12 +30,12 @@ export default function LoginPage() {
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-6">
       <div className="flex w-full max-w-sm flex-col items-center gap-6">
         <h1 className="text-2xl font-semibold">血糖 × 胰島素記錄</h1>
-        <p className="text-sm text-zinc-500">使用 Google 帳號登入</p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">使用 Google 帳號登入</p>
 
         <button
           onClick={signInWithGoogle}
           disabled={loading}
-          className="flex h-12 w-full items-center justify-center gap-3 rounded-lg border border-zinc-300 bg-white text-base font-medium text-zinc-800 disabled:opacity-50"
+          className="flex h-12 w-full items-center justify-center gap-3 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-base font-medium text-zinc-800 dark:text-zinc-100 disabled:opacity-50"
         >
           <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
             <path
@@ -58,7 +58,7 @@ export default function LoginPage() {
           {loading ? "前往 Google…" : "使用 Google 登入"}
         </button>
 
-        {errorMsg && <p className="text-sm text-red-600">{errorMsg}</p>}
+        {errorMsg && <p className="text-sm text-red-600 dark:text-red-400">{errorMsg}</p>}
       </div>
     </main>
   );

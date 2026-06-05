@@ -7,13 +7,14 @@ import {
   estimateActualIcr,
   rankFoodImpact,
 } from "@/lib/analysis";
-import type { Settings } from "@/lib/types";
+import { DEFAULT_MEAL_RANGE, type Settings } from "@/lib/types";
 
 const DEFAULT_SETTINGS: Settings = {
   user_id: "",
   icr: 5,
   target_glucose_low: 80,
   target_glucose_high: 180,
+  ...DEFAULT_MEAL_RANGE,
   updated_at: "",
 };
 

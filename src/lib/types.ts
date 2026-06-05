@@ -9,6 +9,30 @@ export const MEAL_TYPE_LABELS: Record<MealType, string> = {
   snack: "點心",
 };
 
+export type MealRange = {
+  breakfast_end_hour: number;
+  lunch_end_hour: number;
+  dinner_end_hour: number;
+};
+
+// 預設餐別時段邊界（與 DB settings 欄位預設一致）。
+export const DEFAULT_MEAL_RANGE: MealRange = {
+  breakfast_end_hour: 11,
+  lunch_end_hour: 16,
+  dinner_end_hour: 21,
+};
+
+// 依小時數判定餐別（記錄頁預設、之後可由設定調整邊界）。
+export function mealTypeForHour(
+  hour: number,
+  range: MealRange = DEFAULT_MEAL_RANGE,
+): MealType {
+  if (hour < range.breakfast_end_hour) return "breakfast";
+  if (hour < range.lunch_end_hour) return "lunch";
+  if (hour < range.dinner_end_hour) return "dinner";
+  return "snack";
+}
+
 export type Food = {
   id: string;
   user_id: string;
@@ -41,11 +65,25 @@ export type MealFood = {
   quantity: number;
 };
 
+// 糖化血色素（A1C）紀錄：每隔一段時間測一次的回顧指標。
+export type A1cRecord = {
+  id: string;
+  user_id: string;
+  measured_at: string; // 量測日期（YYYY-MM-DD）
+  value: number; // A1C %
+  note: string | null;
+  created_at: string;
+};
+
 export type Settings = {
   user_id: string;
   icr: number; // g 碳水 / 1 單位
   target_glucose_low: number;
   target_glucose_high: number;
+  // 餐別自動判定的時段邊界（小時，0–23）。記錄頁據此預設餐別。
+  breakfast_end_hour: number; // 此時前算早餐
+  lunch_end_hour: number; // 此時前算午餐
+  dinner_end_hour: number; // 此時前算晚餐，之後算點心
   updated_at: string;
 };
 
@@ -75,8 +113,17 @@ export type MealFoodInput = {
   quantity?: number;
 };
 
+export type A1cInput = {
+  measured_at: string;
+  value: number;
+  note?: string | null;
+};
+
 export type SettingsInput = {
   icr: number;
   target_glucose_low: number;
   target_glucose_high: number;
+  breakfast_end_hour: number;
+  lunch_end_hour: number;
+  dinner_end_hour: number;
 };
