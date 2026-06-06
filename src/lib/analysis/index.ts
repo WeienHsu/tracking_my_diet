@@ -450,12 +450,14 @@ export function foodMatches(
   return (mf.food_brand?.trim().toLowerCase() ?? "") === qBrand;
 }
 
-export function aggregateFoodOutcomes(
-  food: { brand?: string | null; name: string },
+// 依「比對條件」彙整 solo/mixed 落點統計（被 aggregateFoodOutcomes 與分組搜尋共用）。
+function aggregateRows(
+  match: (mf: MealFood) => boolean,
   meals: Meal[],
   mealFoods: MealFood[],
-  settings: Pick<Settings, "target_glucose_low" | "target_glucose_high">,
-): FoodAggregate {
+  low: number,
+  high: number,
+): { all: FoodOutcomeStats; solo: FoodOutcomeStats; mixed: FoodOutcomeStats } {
   const mealById = new Map(meals.map((m) => [m.id, m]));
 
   // 每餐的食物項數（用來判定「單獨吃」）。
@@ -464,18 +466,13 @@ export function aggregateFoodOutcomes(
     itemCount.set(mf.meal_id, (itemCount.get(mf.meal_id) ?? 0) + 1);
   }
 
-  // 完全比對此食物（名稱相同、品牌相同或未指定），同一餐多列則加總碳水。
+  // 命中此食物的餐次，同一餐多列則加總碳水。
   const foodCarbsByMeal = new Map<string, number>();
   for (const mf of mealFoods) {
-    if (!foodMatches(mf, food)) continue;
+    if (!match(mf)) continue;
     const c = mf.carbs * (mf.quantity ?? 1);
     foodCarbsByMeal.set(mf.meal_id, (foodCarbsByMeal.get(mf.meal_id) ?? 0) + c);
   }
-
-  const { low, high } = {
-    low: settings.target_glucose_low,
-    high: settings.target_glucose_high,
-  };
 
   const soloRows: FoodMealRow[] = [];
   const mixedRows: FoodMealRow[] = [];
@@ -495,11 +492,97 @@ export function aggregateFoodOutcomes(
   }
 
   return {
-    foodName: food.name.trim(),
     all: statsOf([...soloRows, ...mixedRows]),
     solo: statsOf(soloRows),
     mixed: statsOf(mixedRows),
   };
+}
+
+export function aggregateFoodOutcomes(
+  food: { brand?: string | null; name: string },
+  meals: Meal[],
+  mealFoods: MealFood[],
+  settings: Pick<Settings, "target_glucose_low" | "target_glucose_high">,
+): FoodAggregate {
+  const { all, solo, mixed } = aggregateRows(
+    (mf) => foodMatches(mf, food),
+    meals,
+    mealFoods,
+    settings.target_glucose_low,
+    settings.target_glucose_high,
+  );
+  return { foodName: food.name.trim(), all, solo, mixed };
+}
+
+// ---- 階段 3：食物查詢（模糊搜尋找出食物，但每個相異食物分開列統計）----
+
+export type FoodSearchGroup = {
+  brand: string | null;
+  name: string;
+  aggregate: FoodAggregate;
+  avgResidual: number | null; // 來自迴歸殘差；無模型時為 null（不顯示）
+};
+
+function strictKey(brand: string | null | undefined, name: string): string {
+  return `${(brand ?? "").trim().toLowerCase()}|${name.trim().toLowerCase()}`;
+}
+
+export function searchFoodAggregates(
+  query: string,
+  meals: Meal[],
+  mealFoods: MealFood[],
+  settings: Pick<Settings, "target_glucose_low" | "target_glucose_high">,
+  model: IcrModel | null = null,
+): FoodSearchGroup[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+
+  // 模糊（包含）找出有哪些「相異食物」（品牌+名稱嚴格區分）符合查詢字。
+  const distinct = new Map<string, { brand: string | null; name: string }>();
+  for (const mf of mealFoods) {
+    const hit =
+      mf.food_name.toLowerCase().includes(q) ||
+      (mf.food_brand?.toLowerCase().includes(q) ?? false);
+    if (!hit) continue;
+    const key = strictKey(mf.food_brand, mf.food_name);
+    if (!distinct.has(key)) {
+      distinct.set(key, { brand: mf.food_brand, name: mf.food_name });
+    }
+  }
+
+  // 殘差（需迴歸模型）：以嚴格鍵對應。
+  const residualByKey = new Map<string, number>();
+  if (model) {
+    for (const r of foodResidualsByKey(meals, mealFoods, model)) {
+      residualByKey.set(r.key, r.avgResidual);
+    }
+  }
+
+  const { low, high } = {
+    low: settings.target_glucose_low,
+    high: settings.target_glucose_high,
+  };
+
+  const groups: FoodSearchGroup[] = [];
+  for (const { brand, name } of distinct.values()) {
+    const key = strictKey(brand, name);
+    // 嚴格比對（品牌相同、含「無品牌」自成一格），每個相異食物獨立統計。
+    const { all, solo, mixed } = aggregateRows(
+      (mf) => strictKey(mf.food_brand, mf.food_name) === key,
+      meals,
+      mealFoods,
+      low,
+      high,
+    );
+    groups.push({
+      brand,
+      name,
+      aggregate: { foodName: foodLabel(brand, name), all, solo, mixed },
+      avgResidual: residualByKey.get(key) ?? null,
+    });
+  }
+  // 常吃的（餐數多）排前面。
+  return groups.sort((a, b) => b.aggregate.all.n - a.aggregate.all.n);
 }
 
 function statsOf(rows: FoodMealRow[]): FoodOutcomeStats {
@@ -570,6 +653,34 @@ export function foodResiduals(
   }
   // 由「最易升糖」到最不易。
   return out.sort((a, b) => b.avgResidual - a.avgResidual);
+}
+
+// 同 foodResiduals，但以「品牌|名稱」嚴格鍵分組（供分組搜尋精確對應）。
+function foodResidualsByKey(
+  meals: Meal[],
+  mealFoods: MealFood[],
+  model: IcrModel,
+): { key: string; avgResidual: number }[] {
+  const residualByMeal = new Map<string, number>();
+  for (const m of meals) {
+    if (m.glucose_before == null || m.glucose_after == null) continue;
+    const predicted = model.a * m.total_carbs - model.b * m.insulin_units + model.c;
+    residualByMeal.set(m.id, m.glucose_after - m.glucose_before - predicted);
+  }
+
+  const groups = new Map<string, Set<string>>();
+  for (const mf of mealFoods) {
+    if (!residualByMeal.has(mf.meal_id)) continue;
+    const key = strictKey(mf.food_brand, mf.food_name);
+    const ids = groups.get(key) ?? new Set<string>();
+    ids.add(mf.meal_id);
+    groups.set(key, ids);
+  }
+
+  return [...groups].map(([key, ids]) => ({
+    key,
+    avgResidual: mean([...ids].map((id) => residualByMeal.get(id) as number)),
+  }));
 }
 
 // ---- 線性代數小工具（迴歸用）----

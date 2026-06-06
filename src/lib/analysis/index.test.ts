@@ -5,6 +5,7 @@ import {
   cleanMeals,
   estimateIcrIsf,
   aggregateFoodOutcomes,
+  searchFoodAggregates,
   foodResiduals,
 } from "./index";
 
@@ -202,6 +203,46 @@ describe("aggregateFoodOutcomes", () => {
     expect(
       aggregateFoodOutcomes({ brand: "星巴克", name: "拿鐵" }, meals, mealFoods, SETTINGS).all.n,
     ).toBe(1);
+  });
+});
+
+// ---- 分組搜尋 ----
+
+describe("searchFoodAggregates", () => {
+  it("模糊搜尋找出食物，但每個相異食物分開統計", () => {
+    const meals = [
+      makeMeal({ id: "m1" }),
+      makeMeal({ id: "m2" }),
+      makeMeal({ id: "m3" }),
+    ];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_name: "豆腐" }),
+      makeMealFood({ meal_id: "m2", food_name: "板豆腐" }),
+      makeMealFood({ meal_id: "m3", food_name: "板豆腐" }),
+    ];
+    const groups = searchFoodAggregates("豆腐", meals, mealFoods, SETTINGS);
+    // 兩個相異食物：豆腐、板豆腐（不合併）。
+    expect(groups.map((g) => g.name).sort()).toEqual(["板豆腐", "豆腐"]);
+    // 板豆腐 2 次（餐數多）排前面。
+    expect(groups[0].name).toBe("板豆腐");
+    expect(groups[0].aggregate.all.n).toBe(2);
+    const tofu = groups.find((g) => g.name === "豆腐")!;
+    expect(tofu.aggregate.all.n).toBe(1);
+  });
+
+  it("同名不同品牌視為相異食物，各自一組", () => {
+    const meals = [makeMeal({ id: "m1" }), makeMeal({ id: "m2" })];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_brand: "星巴克", food_name: "拿鐵" }),
+      makeMealFood({ meal_id: "m2", food_brand: "路易莎", food_name: "拿鐵" }),
+    ];
+    const groups = searchFoodAggregates("拿鐵", meals, mealFoods, SETTINGS);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((g) => g.aggregate.all.n === 1)).toBe(true);
+  });
+
+  it("空查詢回空陣列", () => {
+    expect(searchFoodAggregates("  ", [], [], SETTINGS)).toEqual([]);
   });
 });
 

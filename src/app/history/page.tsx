@@ -2,7 +2,15 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { listMeals, type ListMealsFilter } from "@/lib/repositories/meals";
-import { MEAL_TYPE_LABELS, type MealType } from "@/lib/types";
+import { getSettings } from "@/lib/repositories/settings";
+import { estimateIcrIsf } from "@/lib/analysis";
+import {
+  MEAL_TYPE_LABELS,
+  type MealType,
+  type Meal,
+  type MealFood,
+  type Settings,
+} from "@/lib/types";
 import MealList from "./MealList";
 import FoodSearch from "./FoodSearch";
 
@@ -36,7 +44,28 @@ export default async function HistoryPage({
   if (sp.from) filter.from = new Date(`${sp.from}T00:00`).toISOString();
   if (sp.to) filter.to = new Date(`${sp.to}T23:59:59`).toISOString();
 
-  const meals = await listMeals(supabase, filter);
+  // 列表用「依篩選」的餐次；食物統計用「全部」歷史（不受日期篩選影響）。
+  const [meals, allMealsWithFoods, settings] = await Promise.all([
+    listMeals(supabase, filter),
+    listMeals(supabase),
+    getSettings(supabase),
+  ]);
+
+  const target = {
+    low: settings?.target_glucose_low ?? 80,
+    high: settings?.target_glucose_high ?? 180,
+  };
+  const allMeals: Meal[] = allMealsWithFoods;
+  const allMealFoods: MealFood[] = allMealsWithFoods.flatMap(
+    (m) => m.meal_foods,
+  );
+  // 迴歸模型（資料夠多才有）供食物殘差「比預期更易升糖」標記。
+  const estSettings = (settings ?? {
+    target_glucose_low: target.low,
+    target_glucose_high: target.high,
+    icr: 5,
+  }) as Settings;
+  const model = estimateIcrIsf(allMeals, estSettings).model;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-5 py-8">
@@ -49,8 +78,13 @@ export default async function HistoryPage({
         </nav>
       </div>
 
-      {/* 食物查詢：上次吃 X 的碳水與餐後結果 */}
-      <FoodSearch />
+      {/* 食物查詢：上次吃 X 的落點統計（分單獨吃/混合餐） */}
+      <FoodSearch
+        meals={allMeals}
+        mealFoods={allMealFoods}
+        target={target}
+        model={model}
+      />
 
       {/* 篩選（GET 表單，重新整理頁面）*/}
       <form className="flex flex-col gap-3 rounded-xl bg-zinc-50 dark:bg-zinc-800 p-4">
