@@ -5,7 +5,12 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { listFoods, createFood } from "@/lib/repositories/foods";
 import { createMeal } from "@/lib/repositories/meals";
-import type { MealType, MealFoodInput } from "@/lib/types";
+import type {
+  MealType,
+  MealFoodInput,
+  Exercise,
+  MealContext,
+} from "@/lib/types";
 
 export type LogFoodLine = {
   brand: string | null;
@@ -20,6 +25,8 @@ export type LogMealData = {
   glucoseBefore: number | null;
   insulinUnits: number;
   glucoseAfter: number | null;
+  exercise: Exercise;
+  context: MealContext[];
   note: string | null;
   foods: LogFoodLine[];
 };
@@ -74,6 +81,8 @@ export async function createMealAction(data: LogMealData) {
       total_carbs: totalCarbs,
       insulin_units: data.insulinUnits,
       glucose_after: data.glucoseAfter,
+      exercise: data.exercise,
+      context: data.context,
       note: data.note,
     },
     mealFoods,

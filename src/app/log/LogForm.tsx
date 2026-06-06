@@ -4,9 +4,13 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MEAL_TYPE_LABELS,
+  EXERCISE_LABELS,
+  MEAL_CONTEXT_LABELS,
   mealTypeForHour,
   type MealType,
   type MealRange,
+  type Exercise,
+  type MealContext,
 } from "@/lib/types";
 import { createMealAction } from "./actions";
 
@@ -23,6 +27,8 @@ type FoodLine = {
 };
 
 const MEAL_TYPES = Object.keys(MEAL_TYPE_LABELS) as MealType[];
+const EXERCISES = Object.keys(EXERCISE_LABELS) as Exercise[];
+const CONTEXTS = Object.keys(MEAL_CONTEXT_LABELS) as MealContext[];
 
 // 現在時間格式化為 <input type="datetime-local"> 需要的本地字串。
 function nowLocalInput(): string {
@@ -56,6 +62,8 @@ export default function LogForm({
   const [insulin, setInsulin] = useState("");
   const [doseTouched, setDoseTouched] = useState(false);
   const [glucoseAfter, setGlucoseAfter] = useState("");
+  const [exercise, setExercise] = useState<Exercise>("none");
+  const [context, setContext] = useState<MealContext[]>([]);
   const [note, setNote] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
@@ -115,6 +123,12 @@ export default function LogForm({
     );
   }
 
+  function toggleContext(c: MealContext) {
+    setContext((prev) =>
+      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c],
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
@@ -141,6 +155,8 @@ export default function LogForm({
         glucoseBefore: glucoseBefore === "" ? null : Number(glucoseBefore),
         insulinUnits: Number(insulinValue) || 0,
         glucoseAfter: glucoseAfter === "" ? null : Number(glucoseAfter),
+        exercise,
+        context,
         note: note.trim() || null,
         foods: lines,
       });
@@ -149,6 +165,8 @@ export default function LogForm({
       setFoodLines([{ brand: "", name: "", carbs: "", quantity: "1" }]);
       setGlucoseBefore("");
       setGlucoseAfter("");
+      setExercise("none");
+      setContext([]);
       setNote("");
       setInsulin("");
       setDoseTouched(false);
@@ -332,6 +350,53 @@ export default function LogForm({
           placeholder="例：150"
           className={inputClass}
         />
+      </Field>
+
+      {/* 運動（影響胰島素敏感度，選填） */}
+      <Field label="運動（餐前後，選填）">
+        <div className="grid grid-cols-3 gap-2">
+          {EXERCISES.map((e) => (
+            <button
+              type="button"
+              key={e}
+              onClick={() => setExercise(e)}
+              className={`h-12 rounded-lg border text-base ${
+                exercise === e
+                  ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
+                  : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200"
+              }`}
+            >
+              {EXERCISE_LABELS[e]}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      {/* 狀態標籤（多選，選填） */}
+      <Field label="狀態（可多選，選填）">
+        <div className="flex flex-wrap gap-2">
+          {CONTEXTS.map((c) => {
+            const on = context.includes(c);
+            return (
+              <button
+                type="button"
+                key={c}
+                onClick={() => toggleContext(c)}
+                aria-pressed={on}
+                className={`h-11 rounded-full border px-4 text-sm ${
+                  on
+                    ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
+                    : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200"
+                }`}
+              >
+                {MEAL_CONTEXT_LABELS[c]}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+          運動／生病／壓力／喝酒會影響血糖；標記後，計算 ICR 時可排除這些餐讓估算更準。
+        </p>
       </Field>
 
       {/* 備註 */}

@@ -9,6 +9,24 @@ export const MEAL_TYPE_LABELS: Record<MealType, string> = {
   snack: "點心",
 };
 
+// 運動強度：影響胰島素敏感度，算 ICR 時可據此排除「不正常的餐」。
+export type Exercise = "none" | "light" | "intense";
+
+export const EXERCISE_LABELS: Record<Exercise, string> = {
+  none: "無",
+  light: "輕",
+  intense: "劇",
+};
+
+// 餐次狀態標籤（多選）：會影響血糖、算 ICR 時可排除這些餐。
+export type MealContext = "illness" | "stress" | "alcohol";
+
+export const MEAL_CONTEXT_LABELS: Record<MealContext, string> = {
+  illness: "生病",
+  stress: "壓力",
+  alcohol: "喝酒",
+};
+
 export type MealRange = {
   breakfast_end_hour: number;
   lunch_end_hour: number;
@@ -62,6 +80,8 @@ export type Meal = {
   total_carbs: number; // 碳水總量 g
   insulin_units: number; // 實際施打單位
   glucose_after: number | null; // 餐後兩小時血糖 mg/dL
+  exercise: Exercise; // 運動強度（影響胰島素敏感度）
+  context: MealContext[]; // 狀態標籤（生病/壓力/喝酒）
   note: string | null;
   created_at: string;
 };
@@ -115,6 +135,8 @@ export type MealInput = {
   total_carbs: number;
   insulin_units: number;
   glucose_after?: number | null;
+  exercise?: Exercise;
+  context?: MealContext[];
   note?: string | null;
 };
 
