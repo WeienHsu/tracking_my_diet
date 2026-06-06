@@ -149,6 +149,85 @@ describe("estimateIcrIsf", () => {
   });
 });
 
+// ---- 問題2：沒打針（胰島素=0）的乾淨餐 ----
+
+describe("沒打針的純碳水餐", () => {
+  it("迴歸法會納入 insulin=0 的乾淨餐", () => {
+    const ICR = 7;
+    const ISF = 35;
+    const a = ISF / ICR;
+    const meals: Meal[] = [];
+    // 30 筆有打針、可辨識模型的餐。
+    for (let i = 0; i < 30; i++) {
+      const carbs = 30 + (i % 7) * 10;
+      const insulin = carbs / ICR + ((i % 3) - 1) * 2;
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          total_carbs: carbs,
+          insulin_units: insulin,
+          glucose_before: 100,
+          glucose_after: 100 + a * carbs - ISF * insulin,
+        }),
+      );
+    }
+    // 5 筆沒打針的純碳水餐（insulin=0）：Δ = a·碳水。
+    for (let i = 0; i < 5; i++) {
+      const carbs = 40 + i * 10;
+      meals.push(
+        makeMeal({
+          id: `z${i}`,
+          total_carbs: carbs,
+          insulin_units: 0,
+          glucose_before: 100,
+          glucose_after: 100 + a * carbs,
+        }),
+      );
+    }
+    const r = estimateIcrIsf(meals, SETTINGS);
+    expect(r.method).toBe("regression");
+    expect(r.n).toBe(35); // 含 5 筆沒打針的餐
+    expect(r.icr).toBeCloseTo(7, 4);
+    expect(r.isf).toBeCloseTo(35, 4);
+  });
+
+  it("中位數法仍排除 insulin=0 的餐（避免除以零）", () => {
+    const center =
+      (SETTINGS.target_glucose_low + SETTINGS.target_glucose_high) / 2;
+    const meals: Meal[] = [];
+    // 5 筆打剛好的餐（insulin>0），隱含 ICR=5。
+    for (let i = 0; i < 5; i++) {
+      const carbs = 40 + i * 5;
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          total_carbs: carbs,
+          insulin_units: carbs / 5,
+          glucose_before: 100,
+          glucose_after: center,
+        }),
+      );
+    }
+    // 3 筆沒打針的餐：不該進中位數法。
+    for (let i = 0; i < 3; i++) {
+      meals.push(
+        makeMeal({
+          id: `z${i}`,
+          total_carbs: 50,
+          insulin_units: 0,
+          glucose_before: 100,
+          glucose_after: center,
+        }),
+      );
+    }
+    // 用高門檻逼走迴歸 → 走中位數法。
+    const r = estimateIcrIsf(meals, SETTINGS, { minMealsForRegression: 100 });
+    expect(r.method).toBe("median");
+    expect(r.n).toBe(5); // 只算有打針的 5 筆
+    expect(r.icr).toBeCloseTo(5, 6);
+  });
+});
+
 // ---- 信心趨勢 ----
 
 describe("icrConfidenceTrend", () => {

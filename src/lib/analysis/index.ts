@@ -242,13 +242,25 @@ export function cleanMeals(meals: Meal[]): Meal[] {
   return meals.filter(isCleanMeal);
 }
 
-// 可用於估算的餐：餐前、餐後、碳水、施打皆有效。
+// 中位數法可用的餐：餐前、餐後、碳水、施打皆有效。
+// （中位數法要算「碳水 ÷ 劑量」，劑量為 0 會除以零，故須劑量>0。）
 function usableForIcr(m: Meal): boolean {
   return (
     m.glucose_before != null &&
     m.glucose_after != null &&
     m.total_carbs > 0 &&
     m.insulin_units > 0
+  );
+}
+
+// 迴歸法可用的餐：餐前、餐後、碳水有效即可，胰島素可為 0。
+// 沒打針的純碳水餐是有效觀測，正好幫迴歸釘住「碳水本身升多少」與基線。
+function usableForRegression(m: Meal): boolean {
+  return (
+    m.glucose_before != null &&
+    m.glucose_after != null &&
+    m.total_carbs > 0 &&
+    m.insulin_units >= 0
   );
 }
 
@@ -280,36 +292,40 @@ export function estimateIcrIsf(
   const configuredIcr = settings.icr;
 
   // 只用「正常的餐」估算（排除運動/生病/壓力/喝酒）。
-  const usable = cleanMeals(meals).filter(usableForIcr);
+  const clean = cleanMeals(meals);
+  // 迴歸法用：含沒打針（胰島素=0）的純碳水餐。
+  const regUsable = clean.filter(usableForRegression);
+  // 中位數法用：須劑量>0（要算 碳水/劑量）。
+  const medianUsable = regUsable.filter((m) => m.insulin_units > 0);
 
   const base = {
     isf: null,
     isfCi: null,
     icrCi: null,
-    n: usable.length,
+    n: regUsable.length,
     configuredIcr,
     model: null,
   } as const;
 
-  if (usable.length < MIN_MEALS_FOR_ESTIMATE) {
+  if (regUsable.length < MIN_MEALS_FOR_ESTIMATE) {
     return {
       ...base,
       method: "insufficient",
       icr: null,
       confidence: "low",
       deviates: false,
-      note: `可用餐次僅 ${usable.length} 筆（已排除有運動/狀態標記的餐），樣本不足，暫不估算。`,
+      note: `可用餐次僅 ${regUsable.length} 筆（已排除有運動/狀態標記的餐），樣本不足，暫不估算。`,
     };
   }
 
-  // 資料夠多且迴歸可解 → 迴歸法（同時得 ICR、ISF、信心區間）。
-  if (usable.length >= minForReg) {
-    const reg = regressionIcrIsf(usable);
+  // 資料夠多且迴歸可解 → 迴歸法（含沒打針的純碳水餐，同時得 ICR、ISF、信心區間）。
+  if (regUsable.length >= minForReg) {
+    const reg = regressionIcrIsf(regUsable);
     if (reg) return { ...reg, configuredIcr, deviates: deviates(reg.icr, configuredIcr) };
   }
 
-  // 否則 → 偏差校正中位數法（用上所有餐，修正循環論證；ISF 用先驗）。
-  return medianIcr(usable, settings);
+  // 否則 → 偏差校正中位數法（須劑量>0，修正循環論證；ISF 用先驗）。
+  return medianIcr(medianUsable, settings);
 }
 
 // 迴歸法：Δ = β0 + β1·碳水 + β2·胰島素，得 a=β1、b=−β2、ISF=b、ICR=b/a。
@@ -473,7 +489,7 @@ export function icrConfidenceTrend(
   settings: Settings,
 ): IcrTrendPoint[] {
   const usable = cleanMeals(meals)
-    .filter(usableForIcr)
+    .filter(usableForRegression)
     .sort(
       (a, b) =>
         new Date(a.eaten_at).getTime() - new Date(b.eaten_at).getTime(),
