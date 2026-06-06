@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { MEAL_TYPE_LABELS } from "@/lib/types";
+import { MEAL_TYPE_LABELS, foodLabel } from "@/lib/types";
 import type { MealWithFoods } from "@/lib/repositories/meals";
 import {
   fillGlucoseAfterAction,
@@ -88,7 +88,10 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
       <p className="text-sm text-zinc-700 dark:text-zinc-200">
         {meal.meal_foods.length > 0
           ? meal.meal_foods
-              .map((f) => (f.quantity > 1 ? `${f.food_name}×${f.quantity}` : f.food_name))
+              .map((f) => {
+                const label = foodLabel(f.food_brand, f.food_name);
+                return f.quantity > 1 ? `${label}×${f.quantity}` : label;
+              })
               .join("、")
           : "—"}
       </p>

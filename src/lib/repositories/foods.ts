@@ -12,7 +12,7 @@ export async function listFoods(supabase: SupabaseClient): Promise<Food[]> {
   return data as Food[];
 }
 
-// 依名稱模糊搜尋（食物查詢用）。
+// 依品牌或名稱模糊搜尋（食物查詢用，兩欄同時比對）。
 export async function searchFoodsByName(
   supabase: SupabaseClient,
   query: string,
@@ -20,7 +20,7 @@ export async function searchFoodsByName(
   const { data, error } = await supabase
     .from("foods")
     .select("*")
-    .ilike("name", `%${query}%`)
+    .or(`name.ilike.%${query}%,brand.ilike.%${query}%`)
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data as Food[];

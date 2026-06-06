@@ -10,8 +10,17 @@ import {
 } from "@/lib/types";
 import { createMealAction } from "./actions";
 
-type FoodOption = { name: string; carbs_per_serving: number };
-type FoodLine = { name: string; carbs: string; quantity: string };
+type FoodOption = {
+  brand: string | null;
+  name: string;
+  carbs_per_serving: number;
+};
+type FoodLine = {
+  brand: string;
+  name: string;
+  carbs: string;
+  quantity: string;
+};
 
 const MEAL_TYPES = Object.keys(MEAL_TYPE_LABELS) as MealType[];
 
@@ -42,7 +51,7 @@ export default function LogForm({
   );
   const [glucoseBefore, setGlucoseBefore] = useState("");
   const [foodLines, setFoodLines] = useState<FoodLine[]>([
-    { name: "", carbs: "", quantity: "1" },
+    { brand: "", name: "", carbs: "", quantity: "1" },
   ]);
   const [insulin, setInsulin] = useState("");
   const [doseTouched, setDoseTouched] = useState(false);
@@ -84,16 +93,20 @@ export default function LogForm({
     const match = foods.find(
       (f) => f.name.toLowerCase() === name.trim().toLowerCase(),
     );
-    // 選到庫裡的食物且該列碳水還沒填時，自動帶入單份碳水。
-    if (match && !foodLines[i].carbs) {
-      updateLine(i, { name, carbs: String(match.carbs_per_serving) });
-    } else {
-      updateLine(i, { name });
+    // 選到庫裡的食物時自動帶入：碳水（該列未填時）與品牌（該列未填時）。
+    const patch: Partial<FoodLine> = { name };
+    if (match) {
+      if (!foodLines[i].carbs) patch.carbs = String(match.carbs_per_serving);
+      if (!foodLines[i].brand && match.brand) patch.brand = match.brand;
     }
+    updateLine(i, patch);
   }
 
   function addLine() {
-    setFoodLines((lines) => [...lines, { name: "", carbs: "", quantity: "1" }]);
+    setFoodLines((lines) => [
+      ...lines,
+      { brand: "", name: "", carbs: "", quantity: "1" },
+    ]);
   }
 
   function removeLine(i: number) {
@@ -109,6 +122,7 @@ export default function LogForm({
     const lines = foodLines
       .filter((l) => l.name.trim() && Number(l.carbs) > 0)
       .map((l) => ({
+        brand: l.brand.trim() || null,
         name: l.name.trim(),
         carbs: Number(l.carbs),
         quantity: Number(l.quantity) || 1,
@@ -132,7 +146,7 @@ export default function LogForm({
       });
 
       // 重設可變欄位，保留時間/餐別以利連續記錄。
-      setFoodLines([{ name: "", carbs: "", quantity: "1" }]);
+      setFoodLines([{ brand: "", name: "", carbs: "", quantity: "1" }]);
       setGlucoseBefore("");
       setGlucoseAfter("");
       setNote("");
@@ -199,8 +213,8 @@ export default function LogForm({
       {/* 食物 */}
       <Field label="食物（可多筆）">
         <datalist id="food-options">
-          {foods.map((f) => (
-            <option key={f.name} value={f.name} />
+          {foods.map((f, idx) => (
+            <option key={idx} value={f.name} />
           ))}
         </datalist>
         <div className="flex flex-col gap-2">
@@ -209,12 +223,18 @@ export default function LogForm({
               key={i}
               className="flex flex-col gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 p-2"
             >
+              <input
+                value={line.brand}
+                onChange={(e) => updateLine(i, { brand: e.target.value })}
+                placeholder="品牌／餐廳（選填，例：星巴克）"
+                className={inputClass}
+              />
               <div className="flex gap-2">
                 <input
                   list="food-options"
                   value={line.name}
                   onChange={(e) => onPickFood(i, e.target.value)}
-                  placeholder="輸入或選擇食物"
+                  placeholder="食物名稱（例：拿鐵）"
                   className={`${inputClass} flex-1`}
                 />
                 <button

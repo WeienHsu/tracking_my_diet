@@ -108,6 +108,7 @@ export async function deleteMeal(
 export type FoodHistoryRow = {
   carbs: number;
   quantity: number;
+  food_brand: string | null;
   food_name: string;
   meals: {
     eaten_at: string;
@@ -126,9 +127,9 @@ export async function searchMealFoodHistory(
   const { data, error } = await supabase
     .from("meal_foods")
     .select(
-      "carbs, quantity, food_name, meals!inner(eaten_at, meal_type, glucose_before, glucose_after, insulin_units, total_carbs)",
+      "carbs, quantity, food_brand, food_name, meals!inner(eaten_at, meal_type, glucose_before, glucose_after, insulin_units, total_carbs)",
     )
-    .ilike("food_name", `%${name}%`);
+    .or(`food_name.ilike.%${name}%,food_brand.ilike.%${name}%`);
   if (error) throw error;
   // meals 為多對一關聯，Supabase 回傳為單一物件；排序在 JS 端做（依用餐時間新到舊）。
   const rows = data as unknown as FoodHistoryRow[];

@@ -33,13 +33,23 @@ export function mealTypeForHour(
   return "snack";
 }
 
+// 食物顯示標籤：有品牌時為「品牌 食物名」，否則只顯示食物名。
+export function foodLabel(
+  brand: string | null | undefined,
+  name: string,
+): string {
+  const b = brand?.trim();
+  return b ? `${b} ${name}` : name;
+}
+
 export type Food = {
   id: string;
   user_id: string;
-  name: string;
+  brand: string | null; // 品牌／餐廳（選填）
+  name: string; // 食物名稱
   carbs_per_serving: number; // 每份碳水克數
   serving_desc: string | null; // 份量描述（例：一個便當）
-  note: string | null; // 餐廳、品牌等
+  note: string | null; // 其他備註
   created_at: string;
 };
 
@@ -60,6 +70,7 @@ export type MealFood = {
   id: string;
   meal_id: string;
   food_id: string | null;
+  food_brand: string | null; // 冗餘存品牌，食物被刪也保留歷史
   food_name: string; // 冗餘存名稱，食物被刪也保留歷史
   carbs: number; // 此餐此食物的碳水量
   quantity: number;
@@ -90,6 +101,7 @@ export type Settings = {
 // ---- 新增/更新用的輸入型別（user_id 由 DB 預設 auth.uid() 填入）----
 
 export type FoodInput = {
+  brand?: string | null;
   name: string;
   carbs_per_serving: number;
   serving_desc?: string | null;
@@ -108,6 +120,7 @@ export type MealInput = {
 
 export type MealFoodInput = {
   food_id?: string | null;
+  food_brand?: string | null;
   food_name: string;
   carbs: number;
   quantity?: number;

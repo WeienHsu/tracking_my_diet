@@ -39,6 +39,7 @@ export default async function LogPage() {
 
       <LogForm
         foods={foods.map((f) => ({
+          brand: f.brand,
           name: f.name,
           carbs_per_serving: f.carbs_per_serving,
         }))}

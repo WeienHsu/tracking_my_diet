@@ -8,6 +8,7 @@ import { createMeal } from "@/lib/repositories/meals";
 import type { MealType, MealFoodInput } from "@/lib/types";
 
 export type LogFoodLine = {
+  brand: string | null;
   name: string;
   carbs: number; // 單份碳水克數
   quantity: number;
@@ -31,24 +32,28 @@ export async function createMealAction(data: LogMealData) {
   if (!user) redirect("/login");
 
   // 解析食物：庫裡已有的沿用其 id；沒有的新增進食物庫，下次可直接查。
+  // 以「品牌+食物名」當鍵，讓同名不同品牌視為不同食物。
   const existing = await listFoods(supabase);
-  const byName = new Map(existing.map((f) => [f.name.trim().toLowerCase(), f]));
+  const byKey = new Map(existing.map((f) => [foodKey(f.brand, f.name), f]));
 
   const mealFoods: MealFoodInput[] = [];
   for (const line of data.foods) {
     const name = line.name.trim();
     if (!name) continue;
-    const key = name.toLowerCase();
-    let food = byName.get(key);
+    const brand = line.brand?.trim() || null;
+    const key = foodKey(brand, name);
+    let food = byKey.get(key);
     if (!food) {
       food = await createFood(supabase, {
+        brand,
         name,
         carbs_per_serving: line.carbs,
       });
-      byName.set(key, food);
+      byKey.set(key, food);
     }
     mealFoods.push({
       food_id: food.id,
+      food_brand: food.brand,
       food_name: food.name,
       carbs: line.carbs,
       quantity: line.quantity,
@@ -75,4 +80,9 @@ export async function createMealAction(data: LogMealData) {
   );
 
   revalidatePath("/log");
+}
+
+// 食物去重鍵：品牌（可空）+ 食物名，皆 trim/lower。
+function foodKey(brand: string | null, name: string): string {
+  return `${(brand ?? "").trim().toLowerCase()}|${name.trim().toLowerCase()}`;
 }

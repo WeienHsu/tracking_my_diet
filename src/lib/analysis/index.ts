@@ -1,6 +1,6 @@
 // 分析邏輯（純函式、可測試）。見 PROJECT_PLAN.md Section 5。
 
-import type { Meal, MealFood, Settings } from "@/lib/types";
+import { foodLabel, type Meal, type MealFood, type Settings } from "@/lib/types";
 
 // ---- 型別定義 ----
 
@@ -31,6 +31,13 @@ export type FoodImpact = {
   avgGlucoseRise: number | null; // 平均（餐後 − 餐前）
 };
 
+// 血糖趨勢圖的單點（餐前／餐後）。
+export type TrendPoint = {
+  t: string; // 日期標籤（M/D）
+  before: number | null;
+  after: number | null;
+};
+
 // 4. 食物查詢的歷史紀錄
 export type FoodHistoryEntry = {
   eatenAt: string;
@@ -42,6 +49,19 @@ export type FoodHistoryEntry = {
 
 // 反推 ICR 與設定值差距超過此比例（20%）時提示使用者與醫師確認。
 const ICR_DEVIATION_THRESHOLD = 0.2;
+
+// ---- 血糖趨勢（時間由舊到新）----
+
+export function buildTrend(meals: Meal[]): TrendPoint[] {
+  return [...meals].reverse().map((m) => ({
+    t: new Date(m.eaten_at).toLocaleDateString("zh-TW", {
+      month: "numeric",
+      day: "numeric",
+    }),
+    before: m.glucose_before,
+    after: m.glucose_after,
+  }));
+}
 
 // ---- 1. 餐後落點分類 ----
 
@@ -127,10 +147,10 @@ export function rankFoodImpact(
 ): FoodImpact[] {
   const mealById = new Map(meals.map((m) => [m.id, m]));
 
-  // 依食物名稱分組（冗餘存的 food_name 為準，食物被刪也保留）。
+  // 依「品牌 食物名」分組（冗餘存欄位為準，食物被刪也保留；同名不同品牌可區分）。
   const groups = new Map<string, MealFood[]>();
   for (const mf of mealFoods) {
-    const key = mf.food_name;
+    const key = foodLabel(mf.food_brand, mf.food_name);
     const arr = groups.get(key);
     if (arr) arr.push(mf);
     else groups.set(key, [mf]);

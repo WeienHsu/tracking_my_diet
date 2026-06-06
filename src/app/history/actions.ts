@@ -48,6 +48,7 @@ export async function deleteMealAction(mealId: string) {
 }
 
 export type FoodHistoryResult = FoodHistoryEntry & {
+  brand: string | null;
   foodName: string;
   mealType: MealType;
 };
@@ -69,6 +70,7 @@ export async function searchFoodHistoryAction(
   return rows
     .filter((r) => r.meals)
     .map((r) => ({
+      brand: r.food_brand,
       foodName: r.food_name,
       mealType: r.meals!.meal_type,
       eatenAt: r.meals!.eaten_at,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { MEAL_TYPE_LABELS } from "@/lib/types";
+import { MEAL_TYPE_LABELS, foodLabel } from "@/lib/types";
 import { searchFoodHistoryAction, type FoodHistoryResult } from "./actions";
 
 export default function FoodSearch() {
@@ -29,7 +29,7 @@ export default function FoodSearch() {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="輸入食物名，例：便當"
+          placeholder="輸入品牌或食物名，例：星巴克、便當"
           className="h-12 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-base outline-none focus:border-zinc-500"
         />
         <button
@@ -56,7 +56,7 @@ export default function FoodSearch() {
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-zinc-800 dark:text-zinc-100">
-                        {r.foodName}
+                        {foodLabel(r.brand, r.foodName)}
                       </span>
                       <span className="text-xs text-zinc-500 dark:text-zinc-400">
                         {MEAL_TYPE_LABELS[r.mealType]}・{formatDate(r.eatenAt)}
