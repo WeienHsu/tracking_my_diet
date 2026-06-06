@@ -9,6 +9,7 @@ import {
   aggregateFoodOutcomes,
   searchFoodAggregates,
   foodResiduals,
+  foodImpactAdaptive,
 } from "./index";
 
 // ---- 測試用建構子 ----
@@ -322,6 +323,59 @@ describe("searchFoodAggregates", () => {
 
   it("空查詢回空陣列", () => {
     expect(searchFoodAggregates("  ", [], [], SETTINGS)).toEqual([]);
+  });
+});
+
+// ---- 食物影響（自適應）----
+
+describe("foodImpactAdaptive", () => {
+  it("無模型時用單獨吃、每 10g 碳水上升，且需 n≥2", () => {
+    const meals = [
+      // 白飯單獨吃兩次：碳水 50，上升 +100 與 +50 → 每10g = 20、10，平均 15
+      makeMeal({ id: "r1", glucose_before: 100, glucose_after: 200 }),
+      makeMeal({ id: "r2", glucose_before: 100, glucose_after: 150 }),
+      // 青菜單獨吃一次（n=1 → 不採計）
+      makeMeal({ id: "v1", glucose_before: 100, glucose_after: 110 }),
+      // 麵+蛋（混合餐 → A 模式不採計）
+      makeMeal({ id: "m1", glucose_before: 100, glucose_after: 220 }),
+    ];
+    const mealFoods = [
+      makeMealFood({ meal_id: "r1", food_name: "白飯", carbs: 50 }),
+      makeMealFood({ meal_id: "r2", food_name: "白飯", carbs: 50 }),
+      makeMealFood({ meal_id: "v1", food_name: "青菜", carbs: 5 }),
+      makeMealFood({ meal_id: "m1", food_name: "麵", carbs: 60 }),
+      makeMealFood({ meal_id: "m1", food_name: "蛋", carbs: 1 }),
+    ];
+    const res = foodImpactAdaptive(meals, mealFoods, null);
+    expect(res.mode).toBe("solo-normalized");
+    expect(res.items).toHaveLength(1); // 只有白飯達 n≥2
+    expect(res.items[0].foodName).toBe("白飯");
+    expect(res.items[0].value).toBeCloseTo(15, 6);
+    expect(res.items[0].n).toBe(2);
+  });
+
+  it("有模型時用殘差法（可含混合餐），需 n≥2", () => {
+    const model = { a: 5, b: 30, c: 0 };
+    // 同一食物「糖」出現在兩餐，殘差皆 +60 → 平均 60。
+    const meals = [
+      makeMeal({ id: "a", total_carbs: 10, insulin_units: 2, glucose_before: 100, glucose_after: 150 }),
+      makeMeal({ id: "b", total_carbs: 10, insulin_units: 2, glucose_before: 100, glucose_after: 150 }),
+    ];
+    const mealFoods = [
+      makeMealFood({ meal_id: "a", food_name: "糖" }),
+      makeMealFood({ meal_id: "b", food_name: "糖" }),
+    ];
+    const res = foodImpactAdaptive(meals, mealFoods, model);
+    expect(res.mode).toBe("residual");
+    expect(res.items[0].foodName).toBe("糖");
+    expect(res.items[0].value).toBeCloseTo(60, 6);
+    expect(res.items[0].n).toBe(2);
+  });
+
+  it("沒有足夠資料時 mode 為 none", () => {
+    const meals = [makeMeal({ id: "x", glucose_before: 100, glucose_after: 150 })];
+    const mealFoods = [makeMealFood({ meal_id: "x", food_name: "白飯", carbs: 50 })];
+    expect(foodImpactAdaptive(meals, mealFoods, null).mode).toBe("none");
   });
 });
 

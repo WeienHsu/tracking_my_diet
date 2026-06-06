@@ -8,7 +8,7 @@ import {
   estimateIcrIsf,
   mealTypeIcrHints,
   icrConfidenceTrend,
-  rankFoodImpact,
+  foodImpactAdaptive,
   buildTrend,
   type IcrIsfEstimate,
 } from "@/lib/analysis";
@@ -52,19 +52,20 @@ export default async function AnalysisPage() {
   const hints = mealTypeIcrHints(meals, settings, icr.icr);
   const icrTrend = icrConfidenceTrend(meals, settings);
   const mealFoods = meals.flatMap((m) => m.meal_foods);
-  const impact = rankFoodImpact(meals, mealFoods);
 
   // 趨勢圖資料（時間由舊到新）。
   const trend = buildTrend(meals);
 
-  // 食物影響：只取有平均上升幅度的，取前 8 名。
-  const impactData = impact
-    .filter((f) => f.avgGlucoseRise != null)
-    .slice(0, 8)
-    .map((f) => ({
-      foodName: f.foodName,
-      rise: round1(f.avgGlucoseRise as number),
-    }));
+  // 食物影響（自適應）：有迴歸模型用殘差、否則用單獨吃的每 10g 碳水上升；取前 8 名。
+  const impactResult = foodImpactAdaptive(meals, mealFoods, icr.model);
+  const impact = {
+    mode: impactResult.mode,
+    items: impactResult.items.slice(0, 8).map((it) => ({
+      foodName: it.foodName,
+      value: round1(it.value),
+      n: it.n,
+    })),
+  };
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-5 py-8">
@@ -158,7 +159,7 @@ export default async function AnalysisPage() {
               high: landing.highCount,
               low: landing.lowCount,
             }}
-            impact={impactData}
+            impact={impact}
             icrTrend={icrTrend}
           />
 

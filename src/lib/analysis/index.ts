@@ -761,6 +761,95 @@ function foodResidualsByKey(
   }));
 }
 
+// ---- 階段 4+：食物影響（自適應，取代易混淆的整餐平均上升）----
+//
+// 科學依據（見改進報告與文獻）：整餐平均上升會被「共現食物、胰島素劑量、份量」
+// 混淆。較可靠的做法：
+//   B 殘差法（有迴歸模型時）：扣掉「碳水＋胰島素」模型預測後的殘差，正殘差＝
+//     比預期更會升糖；能用上混合餐並控制劑量與共現。
+//   A 單獨吃正規化（無模型時）：只取「單獨吃」的餐，算每 10g 碳水的血糖上升，
+//     並要求重複（n≥MIN）以降低個人內變異。
+
+export const MIN_MEALS_FOR_FOOD_IMPACT = 2;
+
+export type FoodImpactMode = "residual" | "solo-normalized" | "none";
+
+export type FoodImpactItem = {
+  foodName: string;
+  value: number; // 殘差 mg/dL，或每 10g 碳水上升 mg/dL
+  n: number; // 採計餐數
+};
+
+export type FoodImpactResult = {
+  mode: FoodImpactMode;
+  items: FoodImpactItem[];
+};
+
+export function foodImpactAdaptive(
+  meals: Meal[],
+  mealFoods: MealFood[],
+  model: IcrModel | null,
+): FoodImpactResult {
+  // B：有迴歸模型 → 殘差法（控制碳水與胰島素，可用混合餐）。
+  if (model) {
+    const byKey = new Map(
+      foodResidualsByKey(meals, mealFoods, model).map((r) => [r.key, r]),
+    );
+    const labelByKey = new Map<string, string>();
+    const countByKey = new Map<string, Set<string>>();
+    for (const mf of mealFoods) {
+      const key = strictKey(mf.food_brand, mf.food_name);
+      labelByKey.set(key, foodLabel(mf.food_brand, mf.food_name));
+      const ids = countByKey.get(key) ?? new Set<string>();
+      ids.add(mf.meal_id);
+      countByKey.set(key, ids);
+    }
+    const items: FoodImpactItem[] = [];
+    for (const [key, r] of byKey) {
+      const n = countByKey.get(key)?.size ?? 0;
+      if (n < MIN_MEALS_FOR_FOOD_IMPACT) continue;
+      items.push({ foodName: labelByKey.get(key) ?? key, value: r.avgResidual, n });
+    }
+    if (items.length > 0) {
+      items.sort((a, b) => b.value - a.value);
+      return { mode: "residual", items };
+    }
+  }
+
+  // A：無模型 → 只取單獨吃的餐，算每 10g 碳水上升（需 n≥MIN）。
+  const mealById = new Map(meals.map((m) => [m.id, m]));
+  const itemCount = new Map<string, number>();
+  for (const mf of mealFoods) {
+    itemCount.set(mf.meal_id, (itemCount.get(mf.meal_id) ?? 0) + 1);
+  }
+
+  const groups = new Map<string, { label: string; rises: number[] }>();
+  for (const mf of mealFoods) {
+    if ((itemCount.get(mf.meal_id) ?? 0) !== 1) continue; // 只取單獨吃
+    const meal = mealById.get(mf.meal_id);
+    if (!meal || meal.glucose_before == null || meal.glucose_after == null) continue;
+    const carbs = mf.carbs * (mf.quantity ?? 1);
+    if (carbs <= 0) continue;
+    const key = strictKey(mf.food_brand, mf.food_name);
+    const g =
+      groups.get(key) ?? {
+        label: foodLabel(mf.food_brand, mf.food_name),
+        rises: [],
+      };
+    g.rises.push(((meal.glucose_after - meal.glucose_before) / carbs) * 10);
+    groups.set(key, g);
+  }
+
+  const items: FoodImpactItem[] = [...groups.values()]
+    .filter((g) => g.rises.length >= MIN_MEALS_FOR_FOOD_IMPACT)
+    .map((g) => ({ foodName: g.label, value: mean(g.rises), n: g.rises.length }))
+    .sort((a, b) => b.value - a.value);
+
+  return items.length > 0
+    ? { mode: "solo-normalized", items }
+    : { mode: "none", items: [] };
+}
+
 // ---- 線性代數小工具（迴歸用）----
 
 // 普通最小平方法：解 β 使 Xβ≈y，回傳係數與共變異矩陣（cov=σ²(XᵀX)⁻¹）。

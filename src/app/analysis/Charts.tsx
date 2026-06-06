@@ -27,7 +27,24 @@ type TrendPoint = {
 
 type LandingCounts = { ideal: number; high: number; low: number };
 
-type ImpactPoint = { foodName: string; rise: number };
+type ImpactMode = "residual" | "solo-normalized" | "none";
+type ImpactPoint = { foodName: string; value: number; n: number };
+type Impact = { mode: ImpactMode; items: ImpactPoint[] };
+
+// 依模式決定食物影響圖的標題與單位說明。
+const IMPACT_META: Record<
+  Exclude<ImpactMode, "none">,
+  { title: string; barName: string }
+> = {
+  residual: {
+    title: "食物影響（殘差：比模型預測多升 mg/dL，已扣除碳水與胰島素）",
+    barName: "殘差 mg/dL",
+  },
+  "solo-normalized": {
+    title: "食物影響（單獨吃，每 10g 碳水上升 mg/dL）",
+    barName: "每10g碳水上升",
+  },
+};
 
 const LANDING_COLORS = {
   ideal: "#16a34a", // green
@@ -43,7 +60,7 @@ export default function Charts({
 }: {
   trend: TrendPoint[];
   landing: LandingCounts;
-  impact: ImpactPoint[];
+  impact: Impact;
   icrTrend: IcrTrendPoint[];
 }) {
   const pieData = [
@@ -118,15 +135,18 @@ export default function Charts({
         </section>
       )}
 
-      {/* 食物影響長條圖（平均血糖上升幅度）*/}
-      {impact.length > 0 && (
+      {/* 食物影響長條圖（自適應：殘差 / 單獨吃每 10g 碳水上升）*/}
+      {impact.mode !== "none" && impact.items.length > 0 && (
         <section className="flex min-w-0 flex-col gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
           <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-            食物影響（平均餐後血糖上升 mg/dL）
+            {IMPACT_META[impact.mode].title}
           </h2>
-          <ResponsiveContainer width="100%" height={Math.max(140, impact.length * 38)}>
+          <ResponsiveContainer
+            width="100%"
+            height={Math.max(140, impact.items.length * 38)}
+          >
             <BarChart
-              data={impact}
+              data={impact.items}
               layout="vertical"
               margin={{ top: 5, right: 12, bottom: 0, left: 8 }}
             >
@@ -138,10 +158,25 @@ export default function Charts({
                 width={88}
                 tick={{ fontSize: 11 }}
               />
-              <Tooltip />
-              <Bar dataKey="rise" name="平均上升" fill="#d97706" radius={[0, 4, 4, 0]} />
+              <Tooltip
+                formatter={(value, _name, item) => [
+                  `${value}（${(item?.payload as ImpactPoint).n} 餐）`,
+                  IMPACT_META[impact.mode as Exclude<ImpactMode, "none">].barName,
+                ]}
+              />
+              <Bar
+                dataKey="value"
+                name={IMPACT_META[impact.mode].barName}
+                fill="#d97706"
+                radius={[0, 4, 4, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
+          <p className="text-[11px] leading-4 text-zinc-400 dark:text-zinc-500">
+            {impact.mode === "residual"
+              ? "已扣除碳水與胰島素的影響、可用混合餐；正值＝比模型預測更會升糖。"
+              : "僅採計「單獨吃」且重複 ≥2 次的食物，避免混合餐互相干擾。"}
+          </p>
         </section>
       )}
 
