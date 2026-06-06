@@ -160,7 +160,7 @@ describe("aggregateFoodOutcomes", () => {
       makeMealFood({ meal_id: "m2", food_name: "白飯", carbs: 60 }),
       makeMealFood({ meal_id: "m2", food_name: "雞排", carbs: 10 }),
     ];
-    const agg = aggregateFoodOutcomes("白飯", meals, mealFoods, SETTINGS);
+    const agg = aggregateFoodOutcomes({ name: "白飯" }, meals, mealFoods, SETTINGS);
 
     expect(agg.all.n).toBe(2);
     expect(agg.solo.n).toBe(1);
@@ -175,9 +175,33 @@ describe("aggregateFoodOutcomes", () => {
   it("查無此食物時各統計為 0", () => {
     const meals = [makeMeal({ id: "m1" })];
     const mealFoods = [makeMealFood({ meal_id: "m1", food_name: "白飯" })];
-    const agg = aggregateFoodOutcomes("牛排", meals, mealFoods, SETTINGS);
+    const agg = aggregateFoodOutcomes({ name: "牛排" }, meals, mealFoods, SETTINGS);
     expect(agg.all.n).toBe(0);
     expect(agg.all.typicalDose).toBeNull();
+  });
+
+  it("完全比對：查「豆腐」不會誤命中「板豆腐」", () => {
+    const meals = [makeMeal({ id: "m1" }), makeMeal({ id: "m2" })];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_name: "豆腐" }),
+      makeMealFood({ meal_id: "m2", food_name: "板豆腐" }),
+    ];
+    expect(aggregateFoodOutcomes({ name: "豆腐" }, meals, mealFoods, SETTINGS).all.n).toBe(1);
+    expect(aggregateFoodOutcomes({ name: "板豆腐" }, meals, mealFoods, SETTINGS).all.n).toBe(1);
+  });
+
+  it("有填品牌時縮到同品牌；未填品牌則不分品牌", () => {
+    const meals = [makeMeal({ id: "m1" }), makeMeal({ id: "m2" })];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_brand: "星巴克", food_name: "拿鐵" }),
+      makeMealFood({ meal_id: "m2", food_brand: "路易莎", food_name: "拿鐵" }),
+    ];
+    // 未填品牌 → 兩家拿鐵都算
+    expect(aggregateFoodOutcomes({ name: "拿鐵" }, meals, mealFoods, SETTINGS).all.n).toBe(2);
+    // 指定品牌 → 只算該品牌
+    expect(
+      aggregateFoodOutcomes({ brand: "星巴克", name: "拿鐵" }, meals, mealFoods, SETTINGS).all.n,
+    ).toBe(1);
   });
 });
 

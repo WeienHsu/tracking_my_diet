@@ -11,7 +11,13 @@ import {
   type MealRange,
   type Exercise,
   type MealContext,
+  type Meal,
+  type MealFood,
 } from "@/lib/types";
+import {
+  aggregateFoodOutcomes,
+  type FoodOutcomeStats,
+} from "@/lib/analysis";
 import { createMealAction } from "./actions";
 
 type FoodOption = {
@@ -44,10 +50,16 @@ export default function LogForm({
   foods,
   icr,
   mealRange,
+  meals,
+  mealFoods,
+  target,
 }: {
   foods: FoodOption[];
   icr: number;
   mealRange: MealRange;
+  meals: Meal[];
+  mealFoods: MealFood[];
+  target: { low: number; high: number };
 }) {
   const router = useRouter();
 
@@ -290,6 +302,13 @@ export default function LogForm({
                   />
                 </label>
               </div>
+              <FoodStats
+                brand={line.brand}
+                name={line.name}
+                meals={meals}
+                mealFoods={mealFoods}
+                target={target}
+              />
             </div>
           ))}
         </div>
@@ -428,6 +447,90 @@ export default function LogForm({
         {submitting ? "記錄中…" : "記錄這一餐"}
       </button>
     </form>
+  );
+}
+
+// 輸入食物名時，即時顯示過去吃這個的落點統計與常見劑量（做法 A：前端計算）。
+// 名稱完全相同才命中（避免「豆腐」誤命中「板豆腐」）；有填品牌再縮到同品牌。
+function FoodStats({
+  brand,
+  name,
+  meals,
+  mealFoods,
+  target,
+}: {
+  brand: string;
+  name: string;
+  meals: Meal[];
+  mealFoods: MealFood[];
+  target: { low: number; high: number };
+}) {
+  const agg = useMemo(() => {
+    if (name.trim().length < 1) return null;
+    return aggregateFoodOutcomes({ brand, name }, meals, mealFoods, {
+      target_glucose_low: target.low,
+      target_glucose_high: target.high,
+    });
+  }, [brand, name, meals, mealFoods, target]);
+
+  if (!agg || agg.all.n === 0) return null;
+
+  return (
+    <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 p-2.5 text-xs">
+      <p className="font-medium text-zinc-700 dark:text-zinc-200">
+        過去吃「{name.trim()}」共 {agg.all.n} 次
+      </p>
+      {agg.solo.n > 0 && (
+        <StatsLine
+          label="單獨吃"
+          tag="此食物劑量"
+          stats={agg.solo}
+        />
+      )}
+      {agg.mixed.n > 0 && (
+        <StatsLine
+          label="混合餐"
+          tag="整餐劑量（含其他食物）"
+          stats={agg.mixed}
+        />
+      )}
+      <p className="mt-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-400">
+        ⚠️ 僅為過去紀錄的觀察統計，<strong>不可取代專業醫療判斷</strong>。
+      </p>
+    </div>
+  );
+}
+
+function StatsLine({
+  label,
+  tag,
+  stats,
+}: {
+  label: string;
+  tag: string;
+  stats: FoodOutcomeStats;
+}) {
+  return (
+    <div className="mt-1.5 flex flex-col gap-0.5 text-zinc-600 dark:text-zinc-300">
+      <div className="flex flex-wrap items-center gap-x-2">
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">
+          {label} {stats.n} 次
+        </span>
+        <span>
+          理想 {stats.ideal}・偏高 {stats.high}・偏低 {stats.low}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 text-zinc-500 dark:text-zinc-400">
+        {stats.typicalDose != null && (
+          <span>
+            常見{tag} {round1(stats.typicalDose)} 單位
+          </span>
+        )}
+        {stats.typicalCarbs != null && (
+          <span>碳水中位 {round1(stats.typicalCarbs)}g</span>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -436,13 +436,26 @@ export type FoodAggregate = {
 
 type FoodMealRow = { landing: Landing | null; dose: number; foodCarbs: number };
 
+// 食物比對：名稱「完全相同」（避免「豆腐」誤命中「板豆腐」）；
+// 有填品牌時再縮到品牌也相同（品牌為選填的精確化條件）。皆 trim + 小寫。
+export function foodMatches(
+  mf: Pick<MealFood, "food_name" | "food_brand">,
+  query: { brand?: string | null; name: string },
+): boolean {
+  const qName = query.name.trim().toLowerCase();
+  if (!qName) return false;
+  if (mf.food_name.trim().toLowerCase() !== qName) return false;
+  const qBrand = query.brand?.trim().toLowerCase() || null;
+  if (qBrand == null) return true; // 未指定品牌 → 不分品牌
+  return (mf.food_brand?.trim().toLowerCase() ?? "") === qBrand;
+}
+
 export function aggregateFoodOutcomes(
-  foodName: string,
+  food: { brand?: string | null; name: string },
   meals: Meal[],
   mealFoods: MealFood[],
   settings: Pick<Settings, "target_glucose_low" | "target_glucose_high">,
 ): FoodAggregate {
-  const target = foodName.trim().toLowerCase();
   const mealById = new Map(meals.map((m) => [m.id, m]));
 
   // 每餐的食物項數（用來判定「單獨吃」）。
@@ -451,13 +464,10 @@ export function aggregateFoodOutcomes(
     itemCount.set(mf.meal_id, (itemCount.get(mf.meal_id) ?? 0) + 1);
   }
 
-  // 比對此食物（品牌或名稱），同一餐多列則加總碳水。
+  // 完全比對此食物（名稱相同、品牌相同或未指定），同一餐多列則加總碳水。
   const foodCarbsByMeal = new Map<string, number>();
   for (const mf of mealFoods) {
-    const hit =
-      mf.food_name.toLowerCase().includes(target) ||
-      (mf.food_brand?.toLowerCase().includes(target) ?? false);
-    if (!hit) continue;
+    if (!foodMatches(mf, food)) continue;
     const c = mf.carbs * (mf.quantity ?? 1);
     foodCarbsByMeal.set(mf.meal_id, (foodCarbsByMeal.get(mf.meal_id) ?? 0) + c);
   }
@@ -485,7 +495,7 @@ export function aggregateFoodOutcomes(
   }
 
   return {
-    foodName,
+    foodName: food.name.trim(),
     all: statsOf([...soloRows, ...mixedRows]),
     solo: statsOf(soloRows),
     mixed: statsOf(mixedRows),
