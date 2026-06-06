@@ -51,6 +51,14 @@ export function mealTypeForHour(
   return "snack";
 }
 
+// 食物計量方式：份制（每份碳水×份數）或克制（每100克碳水×克數）。
+export type FoodUnit = "serving" | "gram";
+
+export const FOOD_UNIT_LABELS: Record<FoodUnit, string> = {
+  serving: "份",
+  gram: "克",
+};
+
 // 食物顯示標籤：有品牌時為「品牌 食物名」，否則只顯示食物名。
 export function foodLabel(
   brand: string | null | undefined,
@@ -60,12 +68,23 @@ export function foodLabel(
   return b ? `${b} ${name}` : name;
 }
 
+// 一筆食物的總碳水：份制＝每份碳水×份數；克制＝每100克碳水×克數/100。
+export function foodCarbs(
+  unit: FoodUnit,
+  carbsPerUnit: number,
+  amount: number,
+): number {
+  if (!(carbsPerUnit > 0) || !(amount > 0)) return 0;
+  return unit === "gram" ? (carbsPerUnit * amount) / 100 : carbsPerUnit * amount;
+}
+
 export type Food = {
   id: string;
   user_id: string;
   brand: string | null; // 品牌／餐廳（選填）
   name: string; // 食物名稱
-  carbs_per_serving: number; // 每份碳水克數
+  carbs_per_serving: number | null; // 每份碳水克數（份制食物）
+  carbs_per_100g: number | null; // 每 100 克碳水（克制食物）
   serving_desc: string | null; // 份量描述（例：一個便當）
   note: string | null; // 其他備註
   created_at: string;
@@ -92,8 +111,10 @@ export type MealFood = {
   food_id: string | null;
   food_brand: string | null; // 冗餘存品牌，食物被刪也保留歷史
   food_name: string; // 冗餘存名稱，食物被刪也保留歷史
-  carbs: number; // 此餐此食物的碳水量
-  quantity: number;
+  carbs: number; // 此餐此食物的「總」碳水量 g（已含份數/克數換算）
+  unit: FoodUnit; // 計量方式：份 / 克
+  amount: number; // 吃的量：份數（unit=serving）或克數（unit=gram）
+  quantity: number; // 舊欄位（份數），保留相容；新資料改用 amount
 };
 
 // 糖化血色素（A1C）紀錄：每隔一段時間測一次的回顧指標。
@@ -123,7 +144,8 @@ export type Settings = {
 export type FoodInput = {
   brand?: string | null;
   name: string;
-  carbs_per_serving: number;
+  carbs_per_serving?: number | null;
+  carbs_per_100g?: number | null;
   serving_desc?: string | null;
   note?: string | null;
 };
@@ -144,8 +166,9 @@ export type MealFoodInput = {
   food_id?: string | null;
   food_brand?: string | null;
   food_name: string;
-  carbs: number;
-  quantity?: number;
+  carbs: number; // 總碳水（已換算）
+  unit?: FoodUnit;
+  amount?: number;
 };
 
 export type A1cInput = {

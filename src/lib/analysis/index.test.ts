@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Meal, MealFood, Settings } from "@/lib/types";
+import { foodCarbs } from "@/lib/types";
 import {
   isCleanMeal,
   cleanMeals,
@@ -38,6 +39,8 @@ function makeMealFood(p: Partial<MealFood> & { meal_id: string }): MealFood {
     food_brand: null,
     food_name: "食物",
     carbs: 30,
+    unit: "serving",
+    amount: 1,
     quantity: 1,
     ...p,
   };
@@ -53,6 +56,26 @@ const SETTINGS: Settings = {
   dinner_end_hour: 21,
   updated_at: "2026-06-01T00:00:00Z",
 };
+
+// ---- 問題1：食物碳水換算（份 / 每100克）----
+
+describe("foodCarbs", () => {
+  it("份制：每份碳水 × 份數（支援半份）", () => {
+    expect(foodCarbs("serving", 38, 0.5)).toBeCloseTo(19, 6); // 每份38g、吃半份
+    expect(foodCarbs("serving", 60, 2)).toBeCloseTo(120, 6);
+  });
+
+  it("克制：每100克碳水 × 克數 / 100", () => {
+    expect(foodCarbs("gram", 26, 150)).toBeCloseTo(39, 6); // 每100g 26g碳水、吃150g
+    expect(foodCarbs("gram", 100, 100)).toBeCloseTo(100, 6);
+  });
+
+  it("無效輸入回 0", () => {
+    expect(foodCarbs("serving", 0, 2)).toBe(0);
+    expect(foodCarbs("serving", 38, 0)).toBe(0);
+    expect(foodCarbs("gram", NaN, 150)).toBe(0);
+  });
+});
 
 // ---- clean-meal 過濾 ----
 

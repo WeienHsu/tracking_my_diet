@@ -6,11 +6,14 @@ import {
   MEAL_TYPE_LABELS,
   EXERCISE_LABELS,
   MEAL_CONTEXT_LABELS,
+  FOOD_UNIT_LABELS,
+  foodCarbs,
   mealTypeForHour,
   type MealType,
   type MealRange,
   type Exercise,
   type MealContext,
+  type FoodUnit,
   type Meal,
   type MealFood,
 } from "@/lib/types";
@@ -23,18 +26,39 @@ import { createMealAction } from "./actions";
 type FoodOption = {
   brand: string | null;
   name: string;
-  carbs_per_serving: number;
+  carbs_per_serving: number | null;
+  carbs_per_100g: number | null;
 };
 type FoodLine = {
   brand: string;
   name: string;
-  carbs: string;
-  quantity: string;
+  unit: FoodUnit; // 份 / 克
+  carbsPerServing: string; // 每份碳水
+  carbsPer100g: string; // 每100克碳水
+  amount: string; // 份數（serving）或克數（gram）
 };
 
 const MEAL_TYPES = Object.keys(MEAL_TYPE_LABELS) as MealType[];
 const EXERCISES = Object.keys(EXERCISE_LABELS) as Exercise[];
 const CONTEXTS = Object.keys(MEAL_CONTEXT_LABELS) as MealContext[];
+const FOOD_UNITS = Object.keys(FOOD_UNIT_LABELS) as FoodUnit[];
+
+function emptyLine(): FoodLine {
+  return {
+    brand: "",
+    name: "",
+    unit: "serving",
+    carbsPerServing: "",
+    carbsPer100g: "",
+    amount: "1",
+  };
+}
+
+// 一列食物換算後的總碳水（共用 foodCarbs，與後端一致）。
+function lineCarbs(l: FoodLine): number {
+  const per = Number(l.unit === "gram" ? l.carbsPer100g : l.carbsPerServing);
+  return foodCarbs(l.unit, per, Number(l.amount));
+}
 
 // 現在時間格式化為 <input type="datetime-local"> 需要的本地字串。
 function nowLocalInput(): string {
@@ -68,9 +92,7 @@ export default function LogForm({
     mealTypeForHour(new Date().getHours(), mealRange),
   );
   const [glucoseBefore, setGlucoseBefore] = useState("");
-  const [foodLines, setFoodLines] = useState<FoodLine[]>([
-    { brand: "", name: "", carbs: "", quantity: "1" },
-  ]);
+  const [foodLines, setFoodLines] = useState<FoodLine[]>([emptyLine()]);
   const [insulin, setInsulin] = useState("");
   const [doseTouched, setDoseTouched] = useState(false);
   const [glucoseAfter, setGlucoseAfter] = useState("");
@@ -85,12 +107,7 @@ export default function LogForm({
   } | null>(null);
 
   const totalCarbs = useMemo(
-    () =>
-      foodLines.reduce((sum, l) => {
-        const c = Number(l.carbs);
-        const q = Number(l.quantity) || 1;
-        return sum + (Number.isFinite(c) ? c * q : 0);
-      }, 0),
+    () => foodLines.reduce((sum, l) => sum + lineCarbs(l), 0),
     [foodLines],
   );
 
@@ -113,20 +130,23 @@ export default function LogForm({
     const match = foods.find(
       (f) => f.name.toLowerCase() === name.trim().toLowerCase(),
     );
-    // 選到庫裡的食物時自動帶入：碳水（該列未填時）與品牌（該列未填時）。
+    // 選到庫裡的食物時自動帶入（該列對應欄位未填時）：品牌與營養標示。
     const patch: Partial<FoodLine> = { name };
     if (match) {
-      if (!foodLines[i].carbs) patch.carbs = String(match.carbs_per_serving);
       if (!foodLines[i].brand && match.brand) patch.brand = match.brand;
+      if (!foodLines[i].carbsPerServing && match.carbs_per_serving != null)
+        patch.carbsPerServing = String(match.carbs_per_serving);
+      if (!foodLines[i].carbsPer100g && match.carbs_per_100g != null)
+        patch.carbsPer100g = String(match.carbs_per_100g);
+      // 庫裡只有克制資料時，預設切到克模式。
+      if (match.carbs_per_serving == null && match.carbs_per_100g != null)
+        patch.unit = "gram";
     }
     updateLine(i, patch);
   }
 
   function addLine() {
-    setFoodLines((lines) => [
-      ...lines,
-      { brand: "", name: "", carbs: "", quantity: "1" },
-    ]);
+    setFoodLines((lines) => [...lines, emptyLine()]);
   }
 
   function removeLine(i: number) {
@@ -146,13 +166,23 @@ export default function LogForm({
     setMessage(null);
 
     const lines = foodLines
-      .filter((l) => l.name.trim() && Number(l.carbs) > 0)
       .map((l) => ({
         brand: l.brand.trim() || null,
         name: l.name.trim(),
-        carbs: Number(l.carbs),
-        quantity: Number(l.quantity) || 1,
-      }));
+        unit: l.unit,
+        amount: Number(l.amount),
+        carbsPerUnit: Number(
+          l.unit === "gram" ? l.carbsPer100g : l.carbsPerServing,
+        ),
+      }))
+      .filter(
+        (l) =>
+          l.name &&
+          Number.isFinite(l.amount) &&
+          l.amount > 0 &&
+          Number.isFinite(l.carbsPerUnit) &&
+          l.carbsPerUnit > 0,
+      );
 
     if (lines.length === 0) {
       setMessage({ type: "err", text: "請至少加入一項有碳水的食物。" });
@@ -174,7 +204,7 @@ export default function LogForm({
       });
 
       // 重設可變欄位，保留時間/餐別以利連續記錄。
-      setFoodLines([{ brand: "", name: "", carbs: "", quantity: "1" }]);
+      setFoodLines([emptyLine()]);
       setGlucoseBefore("");
       setGlucoseAfter("");
       setExercise("none");
@@ -276,32 +306,91 @@ export default function LogForm({
                   ×
                 </button>
               </div>
-              <div className="flex gap-2">
-                <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs text-zinc-500 dark:text-zinc-400">碳水（克）</span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    value={line.carbs}
-                    onChange={(e) => updateLine(i, { carbs: e.target.value })}
-                    placeholder="例：60"
-                    className={inputClass}
-                  />
-                </label>
-                <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs text-zinc-500 dark:text-zinc-400">份數</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    value={line.quantity}
-                    onChange={(e) => updateLine(i, { quantity: e.target.value })}
-                    placeholder="1"
-                    className={inputClass}
-                  />
-                </label>
+              {/* 計量方式：按份 / 按克數 */}
+              <div className="grid grid-cols-2 gap-2">
+                {FOOD_UNITS.map((u) => (
+                  <button
+                    type="button"
+                    key={u}
+                    onClick={() => updateLine(i, { unit: u })}
+                    className={`h-10 rounded-lg border text-sm ${
+                      line.unit === u
+                        ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
+                        : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200"
+                    }`}
+                  >
+                    {u === "serving" ? "按份" : "按克數"}
+                  </button>
+                ))}
               </div>
+              <div className="flex gap-2">
+                {line.unit === "serving" ? (
+                  <>
+                    <label className="flex flex-1 flex-col gap-1">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">每份碳水（克）</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        value={line.carbsPerServing}
+                        onChange={(e) =>
+                          updateLine(i, { carbsPerServing: e.target.value })
+                        }
+                        placeholder="標示每份，例：38"
+                        className={inputClass}
+                      />
+                    </label>
+                    <label className="flex flex-1 flex-col gap-1">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">份數（可填小數）</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        min="0"
+                        value={line.amount}
+                        onChange={(e) => updateLine(i, { amount: e.target.value })}
+                        placeholder="例：0.5"
+                        className={inputClass}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label className="flex flex-1 flex-col gap-1">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">每 100 克碳水</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        value={line.carbsPer100g}
+                        onChange={(e) =>
+                          updateLine(i, { carbsPer100g: e.target.value })
+                        }
+                        placeholder="標示每100g，例：26"
+                        className={inputClass}
+                      />
+                    </label>
+                    <label className="flex flex-1 flex-col gap-1">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">吃了幾克</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        min="0"
+                        value={line.amount}
+                        onChange={(e) => updateLine(i, { amount: e.target.value })}
+                        placeholder="例：150"
+                        className={inputClass}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+              {lineCarbs(line) > 0 && (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  這項約 {round1(lineCarbs(line))} g 碳水
+                </p>
+              )}
               <FoodStats
                 brand={line.brand}
                 name={line.name}
@@ -320,7 +409,7 @@ export default function LogForm({
           ＋ 新增食物
         </button>
         <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-          庫裡已有的食物，選到後會自動帶入碳水。
+          庫裡已有的食物，選到後會自動帶入營養標示。按份或按克數可切換。
         </p>
       </Field>
 

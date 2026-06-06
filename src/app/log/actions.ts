@@ -5,18 +5,21 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { listFoods, createFood } from "@/lib/repositories/foods";
 import { createMeal } from "@/lib/repositories/meals";
+import { foodCarbs } from "@/lib/types";
 import type {
   MealType,
   MealFoodInput,
   Exercise,
   MealContext,
+  FoodUnit,
 } from "@/lib/types";
 
 export type LogFoodLine = {
   brand: string | null;
   name: string;
-  carbs: number; // 單份碳水克數
-  quantity: number;
+  unit: FoodUnit; // 份 / 克
+  amount: number; // 份數（serving）或克數（gram）
+  carbsPerUnit: number; // serving: 每份碳水；gram: 每100克碳水
 };
 
 export type LogMealData = {
@@ -54,23 +57,23 @@ export async function createMealAction(data: LogMealData) {
       food = await createFood(supabase, {
         brand,
         name,
-        carbs_per_serving: line.carbs,
+        carbs_per_serving: line.unit === "serving" ? line.carbsPerUnit : null,
+        carbs_per_100g: line.unit === "gram" ? line.carbsPerUnit : null,
       });
       byKey.set(key, food);
     }
+    const carbs = foodCarbs(line.unit, line.carbsPerUnit, line.amount);
     mealFoods.push({
       food_id: food.id,
       food_brand: food.brand,
       food_name: food.name,
-      carbs: line.carbs,
-      quantity: line.quantity,
+      carbs,
+      unit: line.unit,
+      amount: line.amount,
     });
   }
 
-  const totalCarbs = mealFoods.reduce(
-    (sum, f) => sum + f.carbs * (f.quantity ?? 1),
-    0,
-  );
+  const totalCarbs = mealFoods.reduce((sum, f) => sum + f.carbs, 0);
 
   await createMeal(
     supabase,

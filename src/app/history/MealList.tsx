@@ -94,7 +94,9 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
           ? meal.meal_foods
               .map((f) => {
                 const label = foodLabel(f.food_brand, f.food_name);
-                return f.quantity > 1 ? `${label}×${f.quantity}` : label;
+                const amt = f.amount ?? f.quantity ?? 1;
+                if (f.unit === "gram") return `${label} ${amt}g`;
+                return amt !== 1 ? `${label}×${amt}份` : label;
               })
               .join("、")
           : "—"}

@@ -221,7 +221,7 @@ export function foodHistory(
     .filter((x): x is { mf: MealFood; meal: Meal } => x.meal != null)
     .map(({ mf, meal }) => ({
       eatenAt: meal.eaten_at,
-      carbs: mf.carbs * (mf.quantity ?? 1),
+      carbs: mf.carbs,
       insulinUnits: meal.insulin_units,
       glucoseBefore: meal.glucose_before,
       glucoseAfter: meal.glucose_after,
@@ -242,19 +242,9 @@ export function cleanMeals(meals: Meal[]): Meal[] {
   return meals.filter(isCleanMeal);
 }
 
-// 中位數法可用的餐：餐前、餐後、碳水、施打皆有效。
-// （中位數法要算「碳水 ÷ 劑量」，劑量為 0 會除以零，故須劑量>0。）
-function usableForIcr(m: Meal): boolean {
-  return (
-    m.glucose_before != null &&
-    m.glucose_after != null &&
-    m.total_carbs > 0 &&
-    m.insulin_units > 0
-  );
-}
-
 // 迴歸法可用的餐：餐前、餐後、碳水有效即可，胰島素可為 0。
 // 沒打針的純碳水餐是有效觀測，正好幫迴歸釘住「碳水本身升多少」與基線。
+// （中位數法要算「碳水 ÷ 劑量」會除以零，故另在呼叫端再濾掉劑量為 0 的餐。）
 function usableForRegression(m: Meal): boolean {
   return (
     m.glucose_before != null &&
@@ -564,7 +554,7 @@ function aggregateRows(
   const foodCarbsByMeal = new Map<string, number>();
   for (const mf of mealFoods) {
     if (!match(mf)) continue;
-    const c = mf.carbs * (mf.quantity ?? 1);
+    const c = mf.carbs;
     foodCarbsByMeal.set(mf.meal_id, (foodCarbsByMeal.get(mf.meal_id) ?? 0) + c);
   }
 
@@ -844,7 +834,7 @@ export function foodImpactAdaptive(
     if ((itemCount.get(mf.meal_id) ?? 0) !== 1) continue; // 只取單獨吃
     const meal = mealById.get(mf.meal_id);
     if (!meal || meal.glucose_before == null || meal.glucose_after == null) continue;
-    const carbs = mf.carbs * (mf.quantity ?? 1);
+    const carbs = mf.carbs;
     if (carbs <= 0) continue;
     const key = strictKey(mf.food_brand, mf.food_name);
     const g =
