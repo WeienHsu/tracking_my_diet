@@ -16,6 +16,18 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Database migrations
+
+Schema 以版本化 `.sql` 檔管理在 `migrations/`，用 Node 腳本套用：
+
+```bash
+npm run migrate
+```
+
+需先在 `.env.local` 設 `DATABASE_URL`（Supabase → Project Settings → Database →
+Connection string，建議用 pooler 字串，並把密碼填入）。重新部署或換新環境時，跑一次
+`npm run migrate` 即可重建所有資料表與 RLS；已套用的 migration 會自動跳過。
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
