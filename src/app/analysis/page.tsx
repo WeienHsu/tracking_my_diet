@@ -7,6 +7,7 @@ import {
   classifyLanding,
   estimateActualIcr,
   rankFoodImpact,
+  buildTrend,
 } from "@/lib/analysis";
 import { DEFAULT_MEAL_RANGE, type Settings } from "@/lib/types";
 import Charts from "./Charts";
@@ -45,16 +46,7 @@ export default async function AnalysisPage() {
   const impact = rankFoodImpact(meals, mealFoods);
 
   // 趨勢圖資料（時間由舊到新）。
-  const trend = [...meals]
-    .reverse()
-    .map((m) => ({
-      t: new Date(m.eaten_at).toLocaleDateString("zh-TW", {
-        month: "numeric",
-        day: "numeric",
-      }),
-      before: m.glucose_before,
-      after: m.glucose_after,
-    }));
+  const trend = buildTrend(meals);
 
   // 食物影響：只取有平均上升幅度的，取前 8 名。
   const impactData = impact
