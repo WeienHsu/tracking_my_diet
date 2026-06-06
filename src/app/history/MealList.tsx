@@ -69,7 +69,11 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
           <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
             {MEAL_TYPE_LABELS[meal.meal_type]}
           </span>
-          <span className="ml-2 text-sm text-zinc-500 dark:text-zinc-400">
+          {/* 時間以瀏覽器當地時區/locale 顯示，與伺服器 ICU 版本可能有微小差異（如 AM/PM 分隔字元），故抑制 hydration 警告、以用戶端值為準 */}
+          <span
+            className="ml-2 text-sm text-zinc-500 dark:text-zinc-400"
+            suppressHydrationWarning
+          >
             {formatTime(meal.eaten_at)}
           </span>
         </div>
