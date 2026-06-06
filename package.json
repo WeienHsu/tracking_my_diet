@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "eslint-config-next": "16.2.7",
     "pg": "^8.21.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.8"
   }
 }
