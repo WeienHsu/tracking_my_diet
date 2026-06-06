@@ -14,7 +14,10 @@ import {
   Pie,
   Cell,
   Legend,
+  ComposedChart,
+  Area,
 } from "recharts";
+import type { IcrTrendPoint } from "@/lib/analysis";
 
 type TrendPoint = {
   t: string;
@@ -36,16 +39,25 @@ export default function Charts({
   trend,
   landing,
   impact,
+  icrTrend,
 }: {
   trend: TrendPoint[];
   landing: LandingCounts;
   impact: ImpactPoint[];
+  icrTrend: IcrTrendPoint[];
 }) {
   const pieData = [
     { name: "理想", key: "ideal" as const, value: landing.ideal },
     { name: "偏高", key: "high" as const, value: landing.high },
     { name: "偏低", key: "low" as const, value: landing.low },
   ].filter((d) => d.value > 0);
+
+  // 信心趨勢：把區間轉成 [下界, 上界] 範圍，用 Area 畫陰影帶。
+  const icrTrendData = icrTrend.map((p) => ({
+    n: p.n,
+    icr: round1(p.icr),
+    band: [round1(p.ciLow), round1(p.ciHigh)] as [number, number],
+  }));
 
   return (
     <div className="flex flex-col gap-6">
@@ -132,6 +144,51 @@ export default function Charts({
           </ResponsiveContainer>
         </section>
       )}
+
+      {/* 信心趨勢：迴歸啟動後（≥30 筆有效乾淨餐），ICR 與信心區間隨餐數收窄 */}
+      {icrTrendData.length > 0 && (
+        <section className="flex min-w-0 flex-col gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+          <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            ICR 信心趨勢（區間越窄＝越準）
+          </h2>
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart
+              data={icrTrendData}
+              margin={{ top: 5, right: 8, bottom: 0, left: -16 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
+              <XAxis
+                dataKey="n"
+                tick={{ fontSize: 11 }}
+                label={{ value: "餐數", position: "insideBottomRight", fontSize: 11 }}
+              />
+              <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
+              <Tooltip />
+              <Area
+                dataKey="band"
+                name="95% 信心區間"
+                stroke="none"
+                fill="#0ea5e9"
+                fillOpacity={0.15}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="icr"
+                name="反推 ICR"
+                stroke="#0ea5e9"
+                strokeWidth={2}
+                dot={{ r: 2 }}
+                isAnimationActive={false}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </section>
+      )}
     </div>
   );
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }

@@ -4,6 +4,8 @@ import {
   isCleanMeal,
   cleanMeals,
   estimateIcrIsf,
+  mealTypeIcrHints,
+  icrConfidenceTrend,
   aggregateFoodOutcomes,
   searchFoodAggregates,
   foodResiduals,
@@ -143,6 +145,83 @@ describe("estimateIcrIsf", () => {
     // 只剩 1 筆正常餐 → 不足。
     expect(r.n).toBe(1);
     expect(r.method).toBe("insufficient");
+  });
+});
+
+// ---- 信心趨勢 ----
+
+describe("icrConfidenceTrend", () => {
+  it("未達迴歸門檻時無資料點", () => {
+    const meals = Array.from({ length: 10 }, (_, i) =>
+      makeMeal({ id: `m${i}` }),
+    );
+    expect(icrConfidenceTrend(meals, SETTINGS)).toEqual([]);
+  });
+
+  it("達門檻後產生資料點（從第 30 筆起，依時間遞增）", () => {
+    // 造 35 筆符合已知模型的有效乾淨餐（同迴歸測試的構造）。
+    const ICR = 7;
+    const ISF = 35;
+    const a = ISF / ICR;
+    const meals: Meal[] = [];
+    for (let i = 0; i < 35; i++) {
+      const carbs = 30 + (i % 7) * 10;
+      const insulin = carbs / ICR + ((i % 3) - 1) * 2;
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          eaten_at: `2026-06-${String((i % 28) + 1).padStart(2, "0")}T08:00:00Z`,
+          total_carbs: carbs,
+          insulin_units: insulin,
+          glucose_before: 100,
+          glucose_after: 100 + a * carbs - ISF * insulin,
+        }),
+      );
+    }
+    const trend = icrConfidenceTrend(meals, SETTINGS);
+    // 35 筆 → 點為 n=30..35，共 6 個。
+    expect(trend).toHaveLength(6);
+    expect(trend[0].n).toBe(30);
+    expect(trend[trend.length - 1].n).toBe(35);
+    // ICR 應接近真值 7，且區間有上下界。
+    expect(trend[0].icr).toBeCloseTo(7, 3);
+    expect(trend[0].ciLow).toBeLessThanOrEqual(trend[0].icr);
+    expect(trend[0].ciHigh).toBeGreaterThanOrEqual(trend[0].icr);
+  });
+});
+
+// ---- 餐別時段提示 ----
+
+describe("mealTypeIcrHints", () => {
+  it("某時段資料夠且明顯偏離全域才提示", () => {
+    // 早餐 6 筆，餐後皆理想，碳水/施打=8（隱含 ICR≈8，偏離全域 5）。
+    const center =
+      (SETTINGS.target_glucose_low + SETTINGS.target_glucose_high) / 2;
+    const breakfasts: Meal[] = [];
+    for (let i = 0; i < 6; i++) {
+      breakfasts.push(
+        makeMeal({
+          id: `b${i}`,
+          meal_type: "breakfast",
+          total_carbs: 80,
+          insulin_units: 10, // 80/10 = 8
+          glucose_before: 100,
+          glucose_after: center, // 打剛好 → 隱含 ICR=碳水/施打=8
+        }),
+      );
+    }
+    // 午餐只有 1 筆 → 不足、不提示。
+    const lunch = makeMeal({ id: "l1", meal_type: "lunch" });
+
+    const hints = mealTypeIcrHints([...breakfasts, lunch], SETTINGS, 5);
+    expect(hints).toHaveLength(1);
+    expect(hints[0].mealType).toBe("breakfast");
+    expect(hints[0].estimatedIcr).toBeCloseTo(8, 1);
+    expect(hints[0].n).toBe(6);
+  });
+
+  it("全域 ICR 為 null 時不提示", () => {
+    expect(mealTypeIcrHints([makeMeal({ id: "a" })], SETTINGS, null)).toEqual([]);
   });
 });
 

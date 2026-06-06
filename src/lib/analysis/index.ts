@@ -1,6 +1,12 @@
 // 分析邏輯（純函式、可測試）。見 PROJECT_PLAN.md Section 5。
 
-import { foodLabel, type Meal, type MealFood, type Settings } from "@/lib/types";
+import {
+  foodLabel,
+  type Meal,
+  type MealFood,
+  type MealType,
+  type Settings,
+} from "@/lib/types";
 
 // ---- 型別定義 ----
 
@@ -414,6 +420,78 @@ function deviates(estimated: number | null, configured: number): boolean {
     configured > 0 &&
     Math.abs(estimated - configured) / configured > ICR_DEVIATION_THRESHOLD
   );
+}
+
+// ---- 階段 4：餐別時段提示（全域為主，某時段資料夠且明顯偏離才提示）----
+
+// 某餐別要產生提示，至少要這麼多筆可用餐次。
+export const MIN_MEALS_FOR_SEGMENT_HINT = 5;
+
+export type MealTypeIcrHint = {
+  mealType: MealType;
+  estimatedIcr: number; // 該時段反推 ICR
+  n: number; // 該時段用於估算的餐數
+};
+
+// 只回傳「資料夠（≥門檻）且與全域 ICR 明顯偏離」的時段，作為提示（不直接給新數字建議）。
+export function mealTypeIcrHints(
+  meals: Meal[],
+  settings: Settings,
+  globalIcr: number | null,
+): MealTypeIcrHint[] {
+  if (globalIcr == null || globalIcr <= 0) return [];
+  const types: MealType[] = ["breakfast", "lunch", "dinner", "snack"];
+  const hints: MealTypeIcrHint[] = [];
+  for (const mealType of types) {
+    const subset = meals.filter((m) => m.meal_type === mealType);
+    const est = estimateIcrIsf(subset, settings);
+    if (
+      est.icr != null &&
+      est.method !== "insufficient" &&
+      est.n >= MIN_MEALS_FOR_SEGMENT_HINT &&
+      Math.abs(est.icr - globalIcr) / globalIcr > ICR_DEVIATION_THRESHOLD
+    ) {
+      hints.push({ mealType, estimatedIcr: est.icr, n: est.n });
+    }
+  }
+  return hints;
+}
+
+// ---- 階段 4：信心趨勢（迴歸啟動後，ICR 與信心區間隨餐數變化）----
+
+export type IcrTrendPoint = {
+  n: number; // 累積到第幾筆有效乾淨餐
+  icr: number;
+  ciLow: number;
+  ciHigh: number;
+};
+
+// 將有效乾淨餐依時間排序，對遞增前綴跑迴歸，收集「有信心區間」的點。
+// 需累積到 MIN_MEALS_FOR_REGRESSION 才會有第一個點；之後點愈多、區間愈窄。
+export function icrConfidenceTrend(
+  meals: Meal[],
+  settings: Settings,
+): IcrTrendPoint[] {
+  const usable = cleanMeals(meals)
+    .filter(usableForIcr)
+    .sort(
+      (a, b) =>
+        new Date(a.eaten_at).getTime() - new Date(b.eaten_at).getTime(),
+    );
+
+  const points: IcrTrendPoint[] = [];
+  for (let k = MIN_MEALS_FOR_REGRESSION; k <= usable.length; k++) {
+    const est = estimateIcrIsf(usable.slice(0, k), settings);
+    if (est.method === "regression" && est.icr != null && est.icrCi) {
+      points.push({
+        n: k,
+        icr: est.icr,
+        ciLow: est.icrCi[0],
+        ciHigh: est.icrCi[1],
+      });
+    }
+  }
+  return points;
 }
 
 // ---- 階段 1-C：食物落點統計（分「單獨吃 / 混合餐」）----
