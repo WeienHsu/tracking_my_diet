@@ -55,7 +55,7 @@ export default async function HistoryPage({
       {/* 篩選（GET 表單，重新整理頁面）*/}
       <form className="flex flex-col gap-3 rounded-xl bg-zinc-50 dark:bg-zinc-800 p-4">
         <div className="flex gap-2">
-          <label className="flex flex-1 flex-col gap-1">
+          <label className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">起</span>
             <input
               type="date"
@@ -64,7 +64,7 @@ export default async function HistoryPage({
               className="h-11 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
             />
           </label>
-          <label className="flex flex-1 flex-col gap-1">
+          <label className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">迄</span>
             <input
               type="date"

@@ -83,7 +83,7 @@ export default function Charts({
 
       {/* 餐後落點分布 */}
       {pieData.length > 0 && (
-        <section className="flex flex-col gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+        <section className="flex min-w-0 flex-col gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
           <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">餐後落點分布</h2>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
@@ -108,7 +108,7 @@ export default function Charts({
 
       {/* 食物影響長條圖（平均血糖上升幅度）*/}
       {impact.length > 0 && (
-        <section className="flex flex-col gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+        <section className="flex min-w-0 flex-col gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
           <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
             食物影響（平均餐後血糖上升 mg/dL）
           </h2>
