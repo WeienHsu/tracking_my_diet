@@ -7,14 +7,17 @@ import {
   estimateActualIcr,
   rankFoodImpact,
 } from "@/lib/analysis";
-import { DEFAULT_MEAL_RANGE, type Settings } from "@/lib/types";
+import type { Settings } from "@/lib/types";
 
 const DEFAULT_SETTINGS: Settings = {
   user_id: "",
   icr: 5,
   target_glucose_low: 80,
   target_glucose_high: 180,
-  ...DEFAULT_MEAL_RANGE,
+  breakfast_center_min: 480,
+  lunch_center_min: 750,
+  dinner_center_min: 1110,
+  meal_window_min: 90,
   isf: null,
   correction_target: null,
   advanced_dose: false,

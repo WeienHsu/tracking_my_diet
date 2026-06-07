@@ -9,9 +9,9 @@ import {
   FOOD_UNIT_LABELS,
   foodCarbs,
   foodLabel,
-  mealTypeForHour,
+  mealTypeForMinutes,
   type MealType,
-  type MealRange,
+  type MealCenters,
   type Exercise,
   type MealContext,
   type FoodUnit,
@@ -97,7 +97,7 @@ const inputClass =
 export default function LogForm({
   foods,
   icr,
-  mealRange,
+  mealCenters,
   meals,
   mealFoods,
   target,
@@ -109,7 +109,7 @@ export default function LogForm({
 }: {
   foods: FoodOption[];
   icr: number;
-  mealRange: MealRange;
+  mealCenters: MealCenters;
   meals: Meal[];
   mealFoods: MealFood[];
   target: { low: number; high: number };
@@ -122,9 +122,10 @@ export default function LogForm({
   const router = useRouter();
 
   const [eatenAt, setEatenAt] = useState(nowLocalInput);
-  const [mealType, setMealType] = useState<MealType>(() =>
-    mealTypeForHour(new Date().getHours(), mealRange),
-  );
+  const [mealType, setMealType] = useState<MealType>(() => {
+    const now = new Date();
+    return mealTypeForMinutes(now.getHours() * 60 + now.getMinutes(), mealCenters);
+  });
   const [glucoseBefore, setGlucoseBefore] = useState("");
   const [foodLines, setFoodLines] = useState<FoodLine[]>([emptyLine()]);
   const [insulin, setInsulin] = useState("");

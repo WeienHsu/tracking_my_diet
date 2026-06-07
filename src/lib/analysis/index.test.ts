@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Meal, MealFood, Settings } from "@/lib/types";
-import { foodCarbs, deriveCarbs } from "@/lib/types";
+import { foodCarbs, deriveCarbs, mealTypeForMinutes } from "@/lib/types";
 import {
   isCleanMeal,
   cleanMeals,
@@ -62,9 +62,10 @@ const SETTINGS: Settings = {
   icr: 5,
   target_glucose_low: 80,
   target_glucose_high: 180,
-  breakfast_end_hour: 11,
-  lunch_end_hour: 16,
-  dinner_end_hour: 21,
+  breakfast_center_min: 480,
+  lunch_center_min: 750,
+  dinner_center_min: 1110,
+  meal_window_min: 90,
   isf: null,
   correction_target: null,
   advanced_dose: false,
@@ -124,6 +125,32 @@ describe("deriveCarbs", () => {
       carbs_per_serving: null,
       carbs_per_100g: null,
     });
+  });
+});
+
+// ---- 餐別中心 ±1.5h 判定 ----
+
+describe("mealTypeForMinutes", () => {
+  // 預設：早 480(08:00)、午 750(12:30)、晚 1110(18:30)、±90 分。
+  it("落在某餐中心 ±半徑內歸該餐", () => {
+    expect(mealTypeForMinutes(8 * 60)).toBe("breakfast"); // 08:00
+    expect(mealTypeForMinutes(8 * 60 + 90)).toBe("breakfast"); // 09:30 邊界
+    expect(mealTypeForMinutes(12 * 60 + 30)).toBe("lunch"); // 12:30
+    expect(mealTypeForMinutes(18 * 60 + 30)).toBe("dinner"); // 18:30
+  });
+
+  it("都不在任一餐區間 → 點心", () => {
+    expect(mealTypeForMinutes(10 * 60 + 30)).toBe("snack"); // 10:30（早餐後、午餐前空檔）
+    expect(mealTypeForMinutes(15 * 60)).toBe("snack"); // 15:00
+    expect(mealTypeForMinutes(22 * 60)).toBe("snack"); // 22:00 宵夜
+  });
+
+  it("重疊時取最近的中心", () => {
+    // 自訂：早中心 600、午中心 720、半徑 90 → 660 距早 60、距午 60 平手取先到的早餐；
+    // 650 距早 50 < 距午 70 → 早餐。
+    const c = { breakfast_min: 600, lunch_min: 720, dinner_min: 1110, window_min: 90 };
+    expect(mealTypeForMinutes(650, c)).toBe("breakfast");
+    expect(mealTypeForMinutes(700, c)).toBe("lunch"); // 距午 20 < 距早 100
   });
 });
 

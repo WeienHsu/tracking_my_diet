@@ -8,15 +8,16 @@ import { upsertSettings } from "@/lib/repositories/settings";
 import { type ActionResult, zodError, caughtError } from "@/lib/actions";
 import type { SettingsInput } from "@/lib/types";
 
-const hour = z.number().int().min(0).max(23);
+const minOfDay = z.number().int().min(0).max(1439);
 
 const SettingsSchema = z.object({
   icr: z.number().positive("ICR 必須大於 0"),
   target_glucose_low: z.number().positive(),
   target_glucose_high: z.number().positive(),
-  breakfast_end_hour: hour,
-  lunch_end_hour: hour,
-  dinner_end_hour: hour,
+  breakfast_center_min: minOfDay,
+  lunch_center_min: minOfDay,
+  dinner_center_min: minOfDay,
+  meal_window_min: z.number().int().min(15).max(240),
   isf: z.number().positive("ISF 必須大於 0").nullable(),
   correction_target: z.number().positive().nullable(),
   advanced_dose: z.boolean(),

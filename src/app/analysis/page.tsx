@@ -14,11 +14,7 @@ import {
   DEFAULT_WINDOW_DAYS,
   type IcrIsfEstimate,
 } from "@/lib/analysis";
-import {
-  DEFAULT_MEAL_RANGE,
-  MEAL_TYPE_LABELS,
-  type Settings,
-} from "@/lib/types";
+import { MEAL_TYPE_LABELS, type Settings } from "@/lib/types";
 import Charts from "./Charts";
 import MonthlyReport from "./MonthlyReport";
 
@@ -28,7 +24,10 @@ const DEFAULT_SETTINGS: Settings = {
   icr: 5,
   target_glucose_low: 80,
   target_glucose_high: 180,
-  ...DEFAULT_MEAL_RANGE,
+  breakfast_center_min: 480,
+  lunch_center_min: 750,
+  dinner_center_min: 1110,
+  meal_window_min: 90,
   isf: null,
   correction_target: null,
   advanced_dose: false,

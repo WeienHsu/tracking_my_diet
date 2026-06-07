@@ -6,10 +6,10 @@ import { listMeals } from "@/lib/repositories/meals";
 import { getSettings } from "@/lib/repositories/settings";
 import { estimateIcrIsf, DEFAULT_WINDOW_DAYS } from "@/lib/analysis";
 import {
-  DEFAULT_MEAL_RANGE,
+  DEFAULT_MEAL_CENTERS,
   type Meal,
   type MealFood,
-  type MealRange,
+  type MealCenters,
   type Settings,
 } from "@/lib/types";
 import LogForm from "./LogForm";
@@ -32,12 +32,12 @@ export default async function LogPage() {
     low: settings?.target_glucose_low ?? 80,
     high: settings?.target_glucose_high ?? 180,
   };
-  const mealRange: MealRange = {
-    breakfast_end_hour:
-      settings?.breakfast_end_hour ?? DEFAULT_MEAL_RANGE.breakfast_end_hour,
-    lunch_end_hour: settings?.lunch_end_hour ?? DEFAULT_MEAL_RANGE.lunch_end_hour,
-    dinner_end_hour:
-      settings?.dinner_end_hour ?? DEFAULT_MEAL_RANGE.dinner_end_hour,
+  const mealCenters: MealCenters = {
+    breakfast_min:
+      settings?.breakfast_center_min ?? DEFAULT_MEAL_CENTERS.breakfast_min,
+    lunch_min: settings?.lunch_center_min ?? DEFAULT_MEAL_CENTERS.lunch_min,
+    dinner_min: settings?.dinner_center_min ?? DEFAULT_MEAL_CENTERS.dinner_min,
+    window_min: settings?.meal_window_min ?? DEFAULT_MEAL_CENTERS.window_min,
   };
 
   // 做法 A：把歷史餐次帶進前端，輸入食物時即時算統計（單人、資料量小）。
@@ -85,7 +85,7 @@ export default async function LogPage() {
           serving_grams: f.serving_grams,
         }))}
         icr={icr}
-        mealRange={mealRange}
+        mealCenters={mealCenters}
         meals={meals}
         mealFoods={mealFoods}
         target={target}

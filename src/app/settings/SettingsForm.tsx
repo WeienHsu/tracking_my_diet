@@ -22,11 +22,17 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
   const [icr, setIcr] = useState(String(initial.icr));
   const [low, setLow] = useState(String(initial.target_glucose_low));
   const [high, setHigh] = useState(String(initial.target_glucose_high));
-  const [breakfastEnd, setBreakfastEnd] = useState(
-    String(initial.breakfast_end_hour),
+  // 餐別中心時間（HH:MM）與判定半徑（分鐘）。
+  const [breakfastCenter, setBreakfastCenter] = useState(
+    minToTime(initial.breakfast_center_min),
   );
-  const [lunchEnd, setLunchEnd] = useState(String(initial.lunch_end_hour));
-  const [dinnerEnd, setDinnerEnd] = useState(String(initial.dinner_end_hour));
+  const [lunchCenter, setLunchCenter] = useState(
+    minToTime(initial.lunch_center_min),
+  );
+  const [dinnerCenter, setDinnerCenter] = useState(
+    minToTime(initial.dinner_center_min),
+  );
+  const [windowMin, setWindowMin] = useState(String(initial.meal_window_min));
   // 進階建議劑量（模組一/四）。
   const [advancedDose, setAdvancedDose] = useState(initial.advanced_dose);
   const [isf, setIsf] = useState(initial.isf != null ? String(initial.isf) : "");
@@ -68,9 +74,10 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
         icr: icrNum,
         target_glucose_low: Number(low),
         target_glucose_high: Number(high),
-        breakfast_end_hour: Number(breakfastEnd),
-        lunch_end_hour: Number(lunchEnd),
-        dinner_end_hour: Number(dinnerEnd),
+        breakfast_center_min: timeToMin(breakfastCenter),
+        lunch_center_min: timeToMin(lunchCenter),
+        dinner_center_min: timeToMin(dinnerCenter),
+        meal_window_min: Number(windowMin),
         isf: isfNum,
         correction_target:
           correctionTarget.trim() === "" ? null : Number(correctionTarget),
@@ -139,16 +146,31 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
 
       <div>
         <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-          餐別自動判定時段（小時，0–23）
+          餐別自動判定（三餐中心時間 ±半徑）
         </span>
         <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-          記錄時依現在時間預設餐別：此時前算早餐／午餐／晚餐，晚餐邊界之後算點心。
+          記錄時依現在時間預設餐別：落在某一餐中心的前後半徑內就算那一餐，都不在則算點心。
         </p>
         <div className="mt-2 grid grid-cols-3 gap-2">
-          <HourField label="早餐前" value={breakfastEnd} onChange={setBreakfastEnd} />
-          <HourField label="午餐前" value={lunchEnd} onChange={setLunchEnd} />
-          <HourField label="晚餐前" value={dinnerEnd} onChange={setDinnerEnd} />
+          <TimeField label="早餐中心" value={breakfastCenter} onChange={setBreakfastCenter} />
+          <TimeField label="午餐中心" value={lunchCenter} onChange={setLunchCenter} />
+          <TimeField label="晚餐中心" value={dinnerCenter} onChange={setDinnerCenter} />
         </div>
+        <label className="mt-2 flex flex-col gap-1">
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            判定半徑（前後幾分鐘內算同一餐，預設 90＝1.5 小時）
+          </span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="15"
+            max="240"
+            value={windowMin}
+            onChange={(e) => setWindowMin(e.target.value)}
+            className={inputClass}
+            required
+          />
+        </label>
       </div>
 
       {/* 進階建議劑量（模組一/四）*/}
@@ -305,7 +327,7 @@ function Field({
   );
 }
 
-function HourField({
+function TimeField({
   label,
   value,
   onChange,
@@ -318,17 +340,25 @@ function HourField({
     <label className="flex flex-col gap-1">
       <span className="text-xs text-zinc-500 dark:text-zinc-400">{label}</span>
       <input
-        type="number"
-        inputMode="numeric"
-        min="0"
-        max="23"
+        type="time"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-12 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-base outline-none focus:border-zinc-500"
+        className="h-12 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-base outline-none focus:border-zinc-500"
         required
       />
     </label>
   );
+}
+
+// 分鐘 of day ↔ "HH:MM"。
+function minToTime(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+function timeToMin(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
 }
 
 // IOB 參數說明與來源：點擊展開（手機桌面皆適用）。

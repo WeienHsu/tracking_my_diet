@@ -27,28 +27,43 @@ export const MEAL_CONTEXT_LABELS: Record<MealContext, string> = {
   alcohol: "喝酒",
 };
 
-export type MealRange = {
-  breakfast_end_hour: number;
-  lunch_end_hour: number;
-  dinner_end_hour: number;
+// 餐別判定：三餐中心時間（分鐘 of day）與半徑（±分鐘）。
+// 落在任一中心 ±window_min 內歸該餐（取最近的中心）；都不在則算點心。
+export type MealCenters = {
+  breakfast_min: number;
+  lunch_min: number;
+  dinner_min: number;
+  window_min: number;
 };
 
-// 預設餐別時段邊界（與 DB settings 欄位預設一致）。
-export const DEFAULT_MEAL_RANGE: MealRange = {
-  breakfast_end_hour: 11,
-  lunch_end_hour: 16,
-  dinner_end_hour: 21,
+// 預設：早 08:00、午 12:30、晚 18:30、±90 分（與 DB 欄位預設一致）。
+export const DEFAULT_MEAL_CENTERS: MealCenters = {
+  breakfast_min: 480,
+  lunch_min: 750,
+  dinner_min: 1110,
+  window_min: 90,
 };
 
-// 依小時數判定餐別（記錄頁預設、之後可由設定調整邊界）。
-export function mealTypeForHour(
-  hour: number,
-  range: MealRange = DEFAULT_MEAL_RANGE,
+// 依「當日分鐘數」判定餐別（記錄頁預設、可由設定調整中心與半徑）。
+export function mealTypeForMinutes(
+  minOfDay: number,
+  c: MealCenters = DEFAULT_MEAL_CENTERS,
 ): MealType {
-  if (hour < range.breakfast_end_hour) return "breakfast";
-  if (hour < range.lunch_end_hour) return "lunch";
-  if (hour < range.dinner_end_hour) return "dinner";
-  return "snack";
+  const candidates: [MealType, number][] = [
+    ["breakfast", c.breakfast_min],
+    ["lunch", c.lunch_min],
+    ["dinner", c.dinner_min],
+  ];
+  let best: MealType | null = null;
+  let bestDist = Infinity;
+  for (const [type, center] of candidates) {
+    const d = Math.abs(minOfDay - center);
+    if (d <= c.window_min && d < bestDist) {
+      best = type;
+      bestDist = d;
+    }
+  }
+  return best ?? "snack";
 }
 
 // 食物計量方式：份制（每份碳水×份數）或克制（每100克碳水×克數）。
@@ -149,10 +164,11 @@ export type Settings = {
   icr: number; // g 碳水 / 1 單位
   target_glucose_low: number;
   target_glucose_high: number;
-  // 餐別自動判定的時段邊界（小時，0–23）。記錄頁據此預設餐別。
-  breakfast_end_hour: number; // 此時前算早餐
-  lunch_end_hour: number; // 此時前算午餐
-  dinner_end_hour: number; // 此時前算晚餐，之後算點心
+  // 餐別自動判定：三餐中心時間（分鐘 of day）與半徑（±分鐘）。
+  breakfast_center_min: number;
+  lunch_center_min: number;
+  dinner_center_min: number;
+  meal_window_min: number;
   // 進階建議劑量（模組一/四）。
   isf: number | null; // 胰島素敏感因子（每 1 單位降多少 mg/dL）
   correction_target: number | null; // 校正目標血糖
@@ -207,9 +223,10 @@ export type SettingsInput = {
   icr: number;
   target_glucose_low: number;
   target_glucose_high: number;
-  breakfast_end_hour: number;
-  lunch_end_hour: number;
-  dinner_end_hour: number;
+  breakfast_center_min: number;
+  lunch_center_min: number;
+  dinner_center_min: number;
+  meal_window_min: number;
   isf: number | null;
   correction_target: number | null;
   advanced_dose: boolean;

@@ -113,23 +113,24 @@ export default async function HistoryPage({
       {/* 篩選（GET 表單，重新整理頁面）*/}
       <form className="flex flex-col gap-3 rounded-xl bg-zinc-50 dark:bg-zinc-800 p-4">
         <TimezoneField />
-        <div className="flex gap-2">
-          <label className="flex min-w-0 flex-1 flex-col gap-1">
+        {/* 手機 Chrome 上 type=date 內建最小寬會把兩欄擠到重疊；改 grid 兩欄 + min-w-0 可各自縮放。 */}
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex min-w-0 flex-col gap-1">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">起</span>
             <input
               type="date"
               name="from"
               defaultValue={sp.from ?? ""}
-              className="h-11 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
+              className="h-11 w-full min-w-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
             />
           </label>
-          <label className="flex min-w-0 flex-1 flex-col gap-1">
+          <label className="flex min-w-0 flex-col gap-1">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">迄</span>
             <input
               type="date"
               name="to"
               defaultValue={sp.to ?? ""}
-              className="h-11 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
+              className="h-11 w-full min-w-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
             />
           </label>
         </div>
