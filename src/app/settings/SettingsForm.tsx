@@ -221,6 +221,9 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
                 <option value="custom">自訂</option>
               </select>
             </Field>
+
+            <IobInfo />
+
             <div className="flex gap-2">
               <Field label="作用時間 DIA（分鐘）">
                 <input
@@ -325,5 +328,83 @@ function HourField({
         required
       />
     </label>
+  );
+}
+
+// IOB 參數說明與來源：點擊展開（手機桌面皆適用）。
+function IobInfo() {
+  return (
+    <details className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 text-xs">
+      <summary className="cursor-pointer select-none px-3 py-2 text-zinc-600 dark:text-zinc-300">
+        ⓘ IOB 參數說明與來源
+      </summary>
+      <div className="flex flex-col gap-2 border-t border-zinc-200 dark:border-zinc-700 px-3 py-2 text-zinc-600 dark:text-zinc-300">
+        <p>
+          活性胰島素（IOB）用指數衰減曲線估算，由 <strong>peak（高峰）</strong> 與{" "}
+          <strong>DIA（作用時間）</strong> 兩參數決定，依你用的胰島素而不同：
+        </p>
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="text-left text-zinc-500 dark:text-zinc-400">
+              <th className="py-0.5 pr-2 font-medium">胰島素</th>
+              <th className="py-0.5 pr-2 font-medium">peak</th>
+              <th className="py-0.5 font-medium">DIA</th>
+            </tr>
+          </thead>
+          <tbody>
+            {INSULIN_PRESETS.map((p, i) => (
+              <tr key={i} className="border-t border-zinc-200 dark:border-zinc-700">
+                <td className="py-0.5 pr-2">{p.label}</td>
+                <td className="py-0.5 pr-2">{p.peak} 分</td>
+                <td className="py-0.5">
+                  {Math.round((p.dia / 60) * 10) / 10} 小時
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p>
+          <strong>NovoRapid FlexPen</strong>（成分 aspart）：FlexPen 只是注射筆、不影響藥效，
+          請選「速效類似物」那組（peak 75／DIA 5h）。
+          <strong>注意 NovoRapid ≠ Fiasp</strong>，Fiasp 才選「超速效」。
+          有人覺得 NovoRapid 尾巴較長，可把 DIA 調到 6 小時。
+        </p>
+        <p className="text-zinc-500 dark:text-zinc-400">
+          參數為開源控糖系統（Loop／OpenAPS）通用值，<strong>非醫療指示</strong>，請與你的醫師／衛教師確認。來源：
+        </p>
+        <ul className="flex flex-col gap-1">
+          <li>
+            <a
+              href="https://openaps.readthedocs.io/en/latest/docs/While%20You%20Wait%20For%20Gear/understanding-insulin-on-board-calculations.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 dark:text-blue-400 underline"
+            >
+              OpenAPS：Understanding IOB Calculations
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://bionicwookiee.com/2021/04/26/subtleties-of-insulin-duration/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 dark:text-blue-400 underline"
+            >
+              Bionic Wookiee：Subtleties of insulin duration
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://bionicwookiee.com/2022/12/04/insulin-timings-2022/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 dark:text-blue-400 underline"
+            >
+              Bionic Wookiee：Insulin timings (2022)
+            </a>
+          </li>
+        </ul>
+      </div>
+    </details>
   );
 }
