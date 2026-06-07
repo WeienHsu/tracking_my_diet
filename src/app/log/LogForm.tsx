@@ -191,7 +191,7 @@ export default function LogForm({
 
     setSubmitting(true);
     try {
-      await createMealAction({
+      const res = await createMealAction({
         eatenAt: new Date(eatenAt).toISOString(),
         mealType,
         glucoseBefore: glucoseBefore === "" ? null : Number(glucoseBefore),
@@ -202,6 +202,11 @@ export default function LogForm({
         note: note.trim() || null,
         foods: lines,
       });
+
+      if (!res.ok) {
+        setMessage({ type: "err", text: res.error });
+        return;
+      }
 
       // 重設可變欄位，保留時間/餐別以利連續記錄。
       setFoodLines([emptyLine()]);

@@ -38,7 +38,7 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
 
     setSaving(true);
     try {
-      await saveSettingsAction({
+      const res = await saveSettingsAction({
         icr: icrNum,
         target_glucose_low: Number(low),
         target_glucose_high: Number(high),
@@ -46,6 +46,10 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
         lunch_end_hour: Number(lunchEnd),
         dinner_end_hour: Number(dinnerEnd),
       });
+      if (!res.ok) {
+        setMessage({ type: "err", text: res.error });
+        return;
+      }
       setMessage({ type: "ok", text: "已儲存設定 ✓" });
       router.refresh();
     } catch (err) {

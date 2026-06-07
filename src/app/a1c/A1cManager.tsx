@@ -39,11 +39,15 @@ export default function A1cManager({ records }: { records: A1cRecord[] }) {
 
     setSaving(true);
     try {
-      await createA1cAction({
+      const res = await createA1cAction({
         measured_at: measuredAt,
         value: v,
         note: note.trim() || null,
       });
+      if (!res.ok) {
+        setMessage({ type: "err", text: res.error });
+        return;
+      }
       setValue("");
       setNote("");
       setMeasuredAt(todayLocal());
@@ -142,7 +146,9 @@ function A1cItem({ record }: { record: A1cRecord }) {
 
   function onDelete() {
     if (!confirm("確定刪除這筆 A1C 紀錄？")) return;
-    startTransition(() => deleteA1cAction(record.id));
+    startTransition(() => {
+      deleteA1cAction(record.id);
+    });
   }
 
   return (

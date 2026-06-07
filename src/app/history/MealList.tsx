@@ -40,7 +40,9 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
   function saveAfter() {
     const v = Number(after);
     if (!Number.isFinite(v) || v <= 0) return;
-    startTransition(() => fillGlucoseAfterAction(meal.id, v));
+    startTransition(() => {
+      fillGlucoseAfterAction(meal.id, v);
+    });
   }
 
   function startEditBefore() {
@@ -59,7 +61,9 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
 
   function onDelete() {
     if (!confirm("確定刪除這筆紀錄？")) return;
-    startTransition(() => deleteMealAction(meal.id));
+    startTransition(() => {
+      deleteMealAction(meal.id);
+    });
   }
 
   return (
