@@ -41,8 +41,10 @@ function PendingRow({ meal }: { meal: PendingMeal }) {
     const v = Number(value);
     if (!Number.isFinite(v) || v <= 0) return;
     setError(null);
+    // 首頁卡片針對「1.5–3h 前」的及時補填，量測時間預設為當下（B′）。
+    const measuredAt = new Date().toISOString();
     startTransition(async () => {
-      const res = await fillGlucoseAfterAction(meal.id, v);
+      const res = await fillGlucoseAfterAction(meal.id, v, measuredAt);
       if (!res.ok) {
         setError(res.error);
         return;

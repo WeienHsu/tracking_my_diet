@@ -33,6 +33,13 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
     minToTime(initial.dinner_center_min),
   );
   const [windowMin, setWindowMin] = useState(String(initial.meal_window_min));
+  // 分析：餐後讀數有效窗（以小時呈現，存分鐘）。
+  const [postmealLoHr, setPostmealLoHr] = useState(
+    String(initial.postmeal_window_lo_min / 60),
+  );
+  const [postmealHiHr, setPostmealHiHr] = useState(
+    String(initial.postmeal_window_hi_min / 60),
+  );
   // 進階建議劑量（模組一/四）。
   const [advancedDose, setAdvancedDose] = useState(initial.advanced_dose);
   const [isf, setIsf] = useState(initial.isf != null ? String(initial.isf) : "");
@@ -78,6 +85,8 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
         lunch_center_min: timeToMin(lunchCenter),
         dinner_center_min: timeToMin(dinnerCenter),
         meal_window_min: Number(windowMin),
+        postmeal_window_lo_min: Math.round(Number(postmealLoHr) * 60),
+        postmeal_window_hi_min: Math.round(Number(postmealHiHr) * 60),
         isf: isfNum,
         correction_target:
           correctionTarget.trim() === "" ? null : Number(correctionTarget),
@@ -171,6 +180,40 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
             required
           />
         </label>
+      </div>
+
+      {/* 分析：餐後讀數有效窗（B′）*/}
+      <div>
+        <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+          分析採用的餐後讀數時間窗（小時）
+        </span>
+        <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+          只有「餐後量測時間」落在此範圍的讀數才納入 ICR/ISF 迴歸（ADA 標準約 1–2h，預設 1.5–3h）。
+          其餘照存、照顯示、照算落點，只是不進迴歸；未記量測時間的舊資料照舊納入。
+        </p>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.5"
+            min="0"
+            value={postmealLoHr}
+            onChange={(e) => setPostmealLoHr(e.target.value)}
+            className={inputClass}
+            required
+          />
+          <span className="text-zinc-400 dark:text-zinc-500">–</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.5"
+            min="0"
+            value={postmealHiHr}
+            onChange={(e) => setPostmealHiHr(e.target.value)}
+            className={inputClass}
+            required
+          />
+        </div>
       </div>
 
       {/* 進階建議劑量（模組一/四）*/}

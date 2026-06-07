@@ -24,9 +24,15 @@ const SettingsSchema = z.object({
   insulin_dia_min: z.number().int().positive(),
   insulin_peak_min: z.number().int().positive(),
   iob_auto_subtract: z.boolean(),
-}).refine((v) => v.insulin_dia_min > v.insulin_peak_min, {
-  message: "作用時間需大於高峰時間",
-});
+  postmeal_window_lo_min: z.number().int().min(0).max(600),
+  postmeal_window_hi_min: z.number().int().min(0).max(600),
+})
+  .refine((v) => v.insulin_dia_min > v.insulin_peak_min, {
+    message: "作用時間需大於高峰時間",
+  })
+  .refine((v) => v.postmeal_window_hi_min > v.postmeal_window_lo_min, {
+    message: "量測窗的上限需大於下限",
+  });
 
 export async function saveSettingsAction(
   input: SettingsInput,

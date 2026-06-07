@@ -21,6 +21,8 @@ const DEFAULTS: SettingsInput = {
   insulin_dia_min: 300,
   insulin_peak_min: 75,
   iob_auto_subtract: false,
+  postmeal_window_lo_min: 90,
+  postmeal_window_hi_min: 180,
 };
 
 export default async function SettingsPage() {
@@ -50,6 +52,10 @@ export default async function SettingsPage() {
         insulin_dia_min: settings.insulin_dia_min ?? DEFAULTS.insulin_dia_min,
         insulin_peak_min: settings.insulin_peak_min ?? DEFAULTS.insulin_peak_min,
         iob_auto_subtract: settings.iob_auto_subtract ?? false,
+        postmeal_window_lo_min:
+          settings.postmeal_window_lo_min ?? DEFAULTS.postmeal_window_lo_min,
+        postmeal_window_hi_min:
+          settings.postmeal_window_hi_min ?? DEFAULTS.postmeal_window_hi_min,
       }
     : DEFAULTS;
 

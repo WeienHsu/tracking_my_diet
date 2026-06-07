@@ -302,6 +302,8 @@ export default function LogForm({
         glucoseBefore: glucoseBefore === "" ? null : Number(glucoseBefore),
         insulinUnits: Number(insulinValue) || 0,
         glucoseAfter: glucoseAfter === "" ? null : Number(glucoseAfter),
+        // 餐後血糖若在記錄當下填入，量測時間預設為現在（之後可在歷史頁修正）。
+        glucoseAfterAt: glucoseAfter === "" ? null : new Date().toISOString(),
         exercise,
         context,
         note: note.trim() || null,

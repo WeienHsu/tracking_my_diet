@@ -34,6 +34,8 @@ const DEFAULT_SETTINGS: Settings = {
   insulin_dia_min: 300,
   insulin_peak_min: 75,
   iob_auto_subtract: false,
+  postmeal_window_lo_min: 90,
+  postmeal_window_hi_min: 180,
   updated_at: "",
 };
 

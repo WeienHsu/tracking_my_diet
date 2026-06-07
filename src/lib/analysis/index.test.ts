@@ -17,6 +17,8 @@ import {
   insulinOnBoard,
   iobFraction,
   suggestDose,
+  postMealElapsedMin,
+  withinPostMealWindow,
 } from "./index";
 
 // ---- 測試用建構子 ----
@@ -30,6 +32,7 @@ function makeMeal(p: Partial<Meal> & { id: string }): Meal {
     total_carbs: 30,
     insulin_units: 5,
     glucose_after: 120,
+    glucose_after_at: null,
     exercise: "none",
     context: [],
     note: null,
@@ -72,6 +75,8 @@ const SETTINGS: Settings = {
   insulin_dia_min: 300,
   insulin_peak_min: 75,
   iob_auto_subtract: false,
+  postmeal_window_lo_min: 90,
+  postmeal_window_hi_min: 180,
   updated_at: "2026-06-01T00:00:00Z",
 };
 
@@ -509,6 +514,55 @@ describe("suggestDose", () => {
       subtractIob: true,
     });
     expect(r.dose).toBe(0);
+  });
+});
+
+// ---- 餐後讀數有效量測窗（B′）----
+
+describe("餐後讀數有效窗", () => {
+  it("postMealElapsedMin：依量測時間算經過分鐘；未記回 null", () => {
+    const m = makeMeal({
+      id: "a",
+      eaten_at: "2026-06-01T08:00:00Z",
+      glucose_after_at: "2026-06-01T10:00:00Z",
+    });
+    expect(postMealElapsedMin(m)).toBeCloseTo(120, 6);
+    expect(postMealElapsedMin(makeMeal({ id: "b" }))).toBeNull();
+  });
+
+  it("withinPostMealWindow：窗內納入、窗外排除、未記時間視為納入", () => {
+    const mk = (afterAt: string | null) =>
+      makeMeal({ id: "x", eaten_at: "2026-06-01T08:00:00Z", glucose_after_at: afterAt });
+    expect(withinPostMealWindow(mk("2026-06-01T10:00:00Z"))).toBe(true); // 120 分 ∈ 90–180
+    expect(withinPostMealWindow(mk("2026-06-01T13:00:00Z"))).toBe(false); // 300 分
+    expect(withinPostMealWindow(mk("2026-06-01T08:30:00Z"))).toBe(false); // 30 分
+    expect(withinPostMealWindow(mk(null))).toBe(true); // 未記 → 納入
+  });
+
+  it("estimateIcrIsf 排除窗外的讀數", () => {
+    const ICR = 7;
+    const ISF = 35;
+    const a = ISF / ICR;
+    const meals: Meal[] = [];
+    for (let i = 0; i < 35; i++) {
+      const carbs = 30 + (i % 7) * 10;
+      const insulin = carbs / ICR + ((i % 3) - 1) * 2;
+      const eaten = dayIso(i);
+      // 量測時間 = 用餐後 30 分（窗外）→ 應全被排除。
+      const at = new Date(new Date(eaten).getTime() + 30 * 60_000).toISOString();
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          eaten_at: eaten,
+          glucose_after_at: at,
+          total_carbs: carbs,
+          insulin_units: insulin,
+          glucose_before: 100,
+          glucose_after: 100 + a * carbs - ISF * insulin,
+        }),
+      );
+    }
+    expect(estimateIcrIsf(meals, SETTINGS).method).toBe("insufficient");
   });
 });
 

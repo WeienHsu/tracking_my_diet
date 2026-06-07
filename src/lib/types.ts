@@ -130,7 +130,8 @@ export type Meal = {
   glucose_before: number | null; // 餐前血糖 mg/dL
   total_carbs: number; // 碳水總量 g
   insulin_units: number; // 實際施打單位
-  glucose_after: number | null; // 餐後兩小時血糖 mg/dL
+  glucose_after: number | null; // 餐後血糖 mg/dL（意圖為餐後約 2 小時）
+  glucose_after_at: string | null; // 餐後血糖的實際量測時間（ISO；用來判定是否落在有效窗）
   exercise: Exercise; // 運動強度（影響胰島素敏感度）
   context: MealContext[]; // 狀態標籤（生病/壓力/喝酒）
   note: string | null;
@@ -177,6 +178,9 @@ export type Settings = {
   insulin_dia_min: number; // 作用總時間（分鐘）
   insulin_peak_min: number; // 作用高峰時間（分鐘）
   iob_auto_subtract: boolean; // 是否自動從建議劑量扣除 IOB（預設關）
+  // 餐後讀數「有效量測窗」（分鐘）：迴歸只採用落在此窗的讀數。預設 90–180（1.5–3h）。
+  postmeal_window_lo_min: number;
+  postmeal_window_hi_min: number;
   updated_at: string;
 };
 
@@ -199,6 +203,7 @@ export type MealInput = {
   total_carbs: number;
   insulin_units: number;
   glucose_after?: number | null;
+  glucose_after_at?: string | null;
   exercise?: Exercise;
   context?: MealContext[];
   note?: string | null;
@@ -233,4 +238,6 @@ export type SettingsInput = {
   insulin_dia_min: number;
   insulin_peak_min: number;
   iob_auto_subtract: boolean;
+  postmeal_window_lo_min: number;
+  postmeal_window_hi_min: number;
 };

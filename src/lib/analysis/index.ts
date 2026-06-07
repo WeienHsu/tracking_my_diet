@@ -323,6 +323,32 @@ export function wellSpacedMeals(
   return out;
 }
 
+// ---- 餐後讀數「有效量測窗」（方案 B′）----
+// 餐後血糖意圖為「餐後約 2 小時」（ADA：用餐開始後 1–2h）。量太晚/太早的讀數時點不一致，
+// 會汙染迴歸；故迴歸只採用落在窗內的讀數。未記量測時間的舊資料視為照舊納入（不破壞既有統計）。
+export const DEFAULT_POSTMEAL_LO_MIN = 90;
+export const DEFAULT_POSTMEAL_HI_MIN = 180;
+
+// 餐後讀數距用餐的分鐘數；未記量測時間回 null。
+export function postMealElapsedMin(m: Meal): number | null {
+  if (m.glucose_after_at == null) return null;
+  return (
+    (new Date(m.glucose_after_at).getTime() - new Date(m.eaten_at).getTime()) /
+    60_000
+  );
+}
+
+// 是否落在有效量測窗（未記時間 → 視為納入）。
+export function withinPostMealWindow(
+  m: Meal,
+  loMin: number = DEFAULT_POSTMEAL_LO_MIN,
+  hiMin: number = DEFAULT_POSTMEAL_HI_MIN,
+): boolean {
+  const elapsed = postMealElapsedMin(m);
+  if (elapsed == null) return true;
+  return elapsed >= loMin && elapsed <= hiMin;
+}
+
 // ---- 階段 D：滾動窗口（只取最近 windowDays 天的餐，貼合當下體質）----
 // 泛型保留輸入型別（如 MealWithFoods 仍帶 meal_foods）。
 export function recentMeals<T extends Meal>(
@@ -373,8 +399,12 @@ export function estimateIcrIsf(
   // 階段 5.3：以全部進食事件判定「獨立乾淨餐」，再與正常餐取交集。
   const spacedIds = new Set(wellSpacedMeals(pool, minGapHours).map((m) => m.id));
   const clean = cleanMeals(pool).filter((m) => spacedIds.has(m.id));
+  // B′：只採用餐後讀數落在「有效量測窗」內的餐（未記量測時間的舊資料照舊納入）。
+  const loMin = settings.postmeal_window_lo_min ?? DEFAULT_POSTMEAL_LO_MIN;
+  const hiMin = settings.postmeal_window_hi_min ?? DEFAULT_POSTMEAL_HI_MIN;
+  const windowed = clean.filter((m) => withinPostMealWindow(m, loMin, hiMin));
   // 迴歸法用：含沒打針（胰島素=0）的純碳水餐。
-  const regUsable = clean.filter(usableForRegression);
+  const regUsable = windowed.filter(usableForRegression);
   // 中位數法用：須劑量>0（要算 碳水/劑量）。
   const medianUsable = regUsable.filter((m) => m.insulin_units > 0);
 

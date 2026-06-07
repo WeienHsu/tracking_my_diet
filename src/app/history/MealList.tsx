@@ -29,6 +29,7 @@ export default function MealList({ meals }: { meals: MealWithFoods[] }) {
 function MealCard({ meal }: { meal: MealWithFoods }) {
   const [pending, startTransition] = useTransition();
   const [after, setAfter] = useState("");
+  const [afterAt, setAfterAt] = useState(nowLocalInput); // 餐後讀數的量測時間（B′）
   const [editingAfter, setEditingAfter] = useState(false);
   const [editingBefore, setEditingBefore] = useState(false);
   const [before, setBefore] = useState("");
@@ -38,16 +39,31 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
       ? meal.glucose_after - meal.glucose_before
       : null;
 
+  // 餐後讀數距用餐幾小時（B′；未記量測時間則不顯示）。
+  const afterElapsedHours =
+    meal.glucose_after_at != null
+      ? Math.round(
+          ((new Date(meal.glucose_after_at).getTime() -
+            new Date(meal.eaten_at).getTime()) /
+            3_600_000) *
+            10,
+        ) / 10
+      : null;
+
   function startEditAfter() {
     setAfter(meal.glucose_after != null ? String(meal.glucose_after) : "");
+    setAfterAt(
+      meal.glucose_after_at ? toLocalInput(meal.glucose_after_at) : nowLocalInput(),
+    );
     setEditingAfter(true);
   }
 
   function saveAfter() {
     const v = Number(after);
     if (!Number.isFinite(v) || v <= 0) return;
+    const measuredAt = afterAt ? new Date(afterAt).toISOString() : null;
     startTransition(() => {
-      fillGlucoseAfterAction(meal.id, v);
+      fillGlucoseAfterAction(meal.id, v, measuredAt);
       setEditingAfter(false);
     });
   }
@@ -179,6 +195,11 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
             {rise > 0 ? `+${rise}` : rise}
           </span>{" "}
           mg/dL
+          {afterElapsedHours != null && (
+            <span className="ml-1 text-xs text-zinc-400 dark:text-zinc-500">
+              （餐後 {afterElapsedHours} 小時量）
+            </span>
+          )}
         </p>
       )}
 
@@ -186,34 +207,46 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
 
       {/* 編輯／補填餐後血糖：未填時直接顯示輸入框，已填時點數值才出現 */}
       {(editingAfter || meal.glucose_after == null) && (
-        <div className="mt-1 flex gap-2">
-          <input
-            type="number"
-            inputMode="numeric"
-            value={after}
-            onChange={(e) => setAfter(e.target.value)}
-            placeholder={meal.glucose_after == null ? "補填餐後血糖" : "餐後血糖"}
-            className="h-11 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-sm"
-            autoFocus={editingAfter}
-          />
-          <button
-            type="button"
-            onClick={saveAfter}
-            disabled={pending || after === ""}
-            className="h-11 shrink-0 rounded-lg bg-black dark:bg-white px-4 text-sm font-medium text-white dark:text-black disabled:opacity-50"
-          >
-            {pending ? "…" : meal.glucose_after == null ? "補填" : "儲存"}
-          </button>
-          {editingAfter && (
+        <div className="mt-1 flex flex-col gap-2">
+          <div className="flex gap-2">
+            <input
+              type="number"
+              inputMode="numeric"
+              value={after}
+              onChange={(e) => setAfter(e.target.value)}
+              placeholder={meal.glucose_after == null ? "補填餐後血糖" : "餐後血糖"}
+              className="h-11 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-sm"
+              autoFocus={editingAfter}
+            />
             <button
               type="button"
-              onClick={() => setEditingAfter(false)}
-              disabled={pending}
-              className="h-11 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-sm text-zinc-600 dark:text-zinc-300 disabled:opacity-50"
+              onClick={saveAfter}
+              disabled={pending || after === ""}
+              className="h-11 shrink-0 rounded-lg bg-black dark:bg-white px-4 text-sm font-medium text-white dark:text-black disabled:opacity-50"
             >
-              取消
+              {pending ? "…" : meal.glucose_after == null ? "補填" : "儲存"}
             </button>
-          )}
+            {editingAfter && (
+              <button
+                type="button"
+                onClick={() => setEditingAfter(false)}
+                disabled={pending}
+                className="h-11 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-sm text-zinc-600 dark:text-zinc-300 disabled:opacity-50"
+              >
+                取消
+              </button>
+            )}
+          </div>
+          {/* B′：量測時間，預設帶當下、可改；用來判定是否落在分析的有效窗 */}
+          <label className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+            量測時間
+            <input
+              type="datetime-local"
+              value={afterAt}
+              onChange={(e) => setAfterAt(e.target.value)}
+              className="h-9 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
+            />
+          </label>
         </div>
       )}
     </li>
@@ -236,6 +269,20 @@ function formatTime(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// 現在時間 → <input type="datetime-local"> 的本地字串。
+function nowLocalInput(): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+// ISO → 本地 datetime-local 字串。
+function toLocalInput(iso: string): string {
+  const d = new Date(iso);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
 }
 
 function round1(n: number): number {
