@@ -60,6 +60,7 @@ export default async function LogPage() {
           name: f.name,
           carbs_per_serving: f.carbs_per_serving,
           carbs_per_100g: f.carbs_per_100g,
+          serving_grams: f.serving_grams,
         }))}
         icr={icr}
         mealRange={mealRange}

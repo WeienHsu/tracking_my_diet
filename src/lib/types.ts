@@ -85,10 +85,27 @@ export type Food = {
   name: string; // 食物名稱
   carbs_per_serving: number | null; // 每份碳水克數（份制食物）
   carbs_per_100g: number | null; // 每 100 克碳水（克制食物）
+  serving_grams: number | null; // 每份克重（選填，用來在份↔克間換算）
   serving_desc: string | null; // 份量描述（例：一個便當）
   note: string | null; // 其他備註
   created_at: string;
 };
+
+// 3.2：有「每份克重」時，從已知的一種碳水推算另一種（份↔克自動補齊）。
+// 兩種都有或都無、或沒填克重時，原樣回傳、不亂猜。
+export function deriveCarbs(
+  servingGrams: number | null | undefined,
+  carbsPerServing: number | null | undefined,
+  carbsPer100g: number | null | undefined,
+): { carbs_per_serving: number | null; carbs_per_100g: number | null } {
+  let ps = carbsPerServing ?? null;
+  let pg = carbsPer100g ?? null;
+  if (servingGrams != null && servingGrams > 0) {
+    if (ps != null && pg == null) pg = (ps / servingGrams) * 100;
+    else if (pg != null && ps == null) ps = (pg * servingGrams) / 100;
+  }
+  return { carbs_per_serving: ps, carbs_per_100g: pg };
+}
 
 export type Meal = {
   id: string;
@@ -146,6 +163,7 @@ export type FoodInput = {
   name: string;
   carbs_per_serving?: number | null;
   carbs_per_100g?: number | null;
+  serving_grams?: number | null;
   serving_desc?: string | null;
   note?: string | null;
 };

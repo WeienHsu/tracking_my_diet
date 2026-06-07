@@ -60,6 +60,9 @@ function FoodRow({ food }: { food: Food }) {
   const [per100g, setPer100g] = useState(
     food.carbs_per_100g != null ? String(food.carbs_per_100g) : "",
   );
+  const [servingGrams, setServingGrams] = useState(
+    food.serving_grams != null ? String(food.serving_grams) : "",
+  );
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
@@ -67,6 +70,7 @@ function FoodRow({ food }: { food: Food }) {
     setName(food.name);
     setPerServing(food.carbs_per_serving != null ? String(food.carbs_per_serving) : "");
     setPer100g(food.carbs_per_100g != null ? String(food.carbs_per_100g) : "");
+    setServingGrams(food.serving_grams != null ? String(food.serving_grams) : "");
     setError(null);
   }
 
@@ -74,12 +78,14 @@ function FoodRow({ food }: { food: Food }) {
     setError(null);
     const ps = perServing.trim() === "" ? null : Number(perServing);
     const pg = per100g.trim() === "" ? null : Number(per100g);
+    const sg = servingGrams.trim() === "" ? null : Number(servingGrams);
     startTransition(async () => {
       const res = await updateFoodAction(food.id, {
         brand: brand.trim() || null,
         name: name.trim(),
         carbs_per_serving: ps,
         carbs_per_100g: pg,
+        serving_grams: sg,
       });
       if (!res.ok) {
         setError(res.error);
@@ -176,6 +182,20 @@ function FoodRow({ food }: { food: Food }) {
           />
         </label>
       </div>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          每份克重（選填，填了可自動補另一種碳水）
+        </span>
+        <input
+          type="number"
+          inputMode="decimal"
+          step="any"
+          value={servingGrams}
+          onChange={(e) => setServingGrams(e.target.value)}
+          placeholder="例：一份 50 克"
+          className={inputClass}
+        />
+      </label>
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex gap-2">
         <button
@@ -206,5 +226,6 @@ function carbsLabel(food: Food): string {
   const parts: string[] = [];
   if (food.carbs_per_serving != null) parts.push(`每份 ${food.carbs_per_serving}g`);
   if (food.carbs_per_100g != null) parts.push(`每100克 ${food.carbs_per_100g}g`);
+  if (food.serving_grams != null) parts.push(`一份 ${food.serving_grams}g`);
   return parts.length > 0 ? parts.join("・") : "未設定碳水";
 }

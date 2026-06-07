@@ -31,6 +31,7 @@ type FoodOption = {
   name: string;
   carbs_per_serving: number | null;
   carbs_per_100g: number | null;
+  serving_grams: number | null;
 };
 type FoodLine = {
   brand: string;
@@ -38,6 +39,7 @@ type FoodLine = {
   unit: FoodUnit; // 份 / 克
   carbsPerServing: string; // 每份碳水
   carbsPer100g: string; // 每100克碳水
+  servingGrams: string; // 每份克重（選填）
   amount: string; // 份數（serving）或克數（gram）
 };
 
@@ -69,6 +71,7 @@ function emptyLine(): FoodLine {
     unit: "serving",
     carbsPerServing: "",
     carbsPer100g: "",
+    servingGrams: "",
     amount: "1",
   };
 }
@@ -159,6 +162,8 @@ export default function LogForm({
         patch.carbsPerServing = String(match.carbs_per_serving);
       if (!foodLines[i].carbsPer100g && match.carbs_per_100g != null)
         patch.carbsPer100g = String(match.carbs_per_100g);
+      if (!foodLines[i].servingGrams && match.serving_grams != null)
+        patch.servingGrams = String(match.serving_grams);
       // 庫裡只有克制資料時，預設切到克模式。
       if (match.carbs_per_serving == null && match.carbs_per_100g != null)
         patch.unit = "gram";
@@ -173,6 +178,7 @@ export default function LogForm({
     if (f.carbs_per_serving != null)
       patch.carbsPerServing = String(f.carbs_per_serving);
     if (f.carbs_per_100g != null) patch.carbsPer100g = String(f.carbs_per_100g);
+    if (f.serving_grams != null) patch.servingGrams = String(f.serving_grams);
     patch.unit =
       f.carbs_per_serving == null && f.carbs_per_100g != null
         ? "gram"
@@ -221,6 +227,10 @@ export default function LogForm({
         carbsPerUnit: Number(
           l.unit === "gram" ? l.carbsPer100g : l.carbsPerServing,
         ),
+        servingGrams:
+          l.unit === "serving" && l.servingGrams.trim() !== ""
+            ? Number(l.servingGrams)
+            : null,
       }))
       .filter(
         (l) =>
@@ -447,6 +457,25 @@ export default function LogForm({
                   </>
                 )}
               </div>
+              {/* 3.2：按份時可選填「每份克重」，新食物會記下、之後可份↔克換算 */}
+              {line.unit === "serving" && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    每份克重（選填，例：一份 50 克）
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    value={line.servingGrams}
+                    onChange={(e) =>
+                      updateLine(i, { servingGrams: e.target.value })
+                    }
+                    placeholder="填了可自動補每100克碳水"
+                    className={inputClass}
+                  />
+                </label>
+              )}
               {lineCarbs(line) > 0 && (
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   這項約 {round1(lineCarbs(line))} g 碳水

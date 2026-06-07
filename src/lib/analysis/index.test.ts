@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Meal, MealFood, Settings } from "@/lib/types";
-import { foodCarbs } from "@/lib/types";
+import { foodCarbs, deriveCarbs } from "@/lib/types";
 import {
   isCleanMeal,
   cleanMeals,
@@ -82,6 +82,39 @@ describe("foodCarbs", () => {
     expect(foodCarbs("serving", 0, 2)).toBe(0);
     expect(foodCarbs("serving", 38, 0)).toBe(0);
     expect(foodCarbs("gram", NaN, 150)).toBe(0);
+  });
+});
+
+// ---- 3.2：份↔克自動補齊 ----
+
+describe("deriveCarbs", () => {
+  it("有每份克重時，從每份碳水推每100克", () => {
+    // 一份 50g、每份 30g 碳水 → 每100克 60g。
+    const r = deriveCarbs(50, 30, null);
+    expect(r.carbs_per_serving).toBe(30);
+    expect(r.carbs_per_100g).toBeCloseTo(60, 6);
+  });
+
+  it("有每份克重時，從每100克碳水推每份", () => {
+    // 一份 150g、每100克 26g 碳水 → 每份 39g。
+    const r = deriveCarbs(150, null, 26);
+    expect(r.carbs_per_100g).toBe(26);
+    expect(r.carbs_per_serving).toBeCloseTo(39, 6);
+  });
+
+  it("沒填克重、或兩種都有/都無時不亂猜", () => {
+    expect(deriveCarbs(null, 30, null)).toEqual({
+      carbs_per_serving: 30,
+      carbs_per_100g: null,
+    });
+    expect(deriveCarbs(50, 30, 60)).toEqual({
+      carbs_per_serving: 30,
+      carbs_per_100g: 60,
+    });
+    expect(deriveCarbs(50, null, null)).toEqual({
+      carbs_per_serving: null,
+      carbs_per_100g: null,
+    });
   });
 });
 

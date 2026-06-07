@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { listFoods, createFood, updateFood } from "@/lib/repositories/foods";
 import { createMeal } from "@/lib/repositories/meals";
-import { foodCarbs } from "@/lib/types";
+import { foodCarbs, deriveCarbs } from "@/lib/types";
 import {
   type ActionResult,
   zodError,
@@ -20,6 +20,7 @@ const FoodLineSchema = z.object({
   unit: z.enum(["serving", "gram"]),
   amount: z.number().positive("份量／克數需大於 0"),
   carbsPerUnit: z.number().nonnegative(),
+  servingGrams: z.number().positive().nullable(),
 });
 
 const LogMealSchema = z.object({
@@ -40,6 +41,7 @@ export type LogFoodLine = {
   unit: FoodUnit; // 份 / 克
   amount: number; // 份數（serving）或克數（gram）
   carbsPerUnit: number; // serving: 每份碳水；gram: 每100克碳水
+  servingGrams: number | null; // 每份克重（選填）
 };
 
 export type LogMealData = z.infer<typeof LogMealSchema>;
@@ -69,11 +71,19 @@ export async function createMealAction(data: LogMealData): Promise<ActionResult>
       const key = foodKey(brand, name);
       let food = byKey.get(key);
       if (!food) {
+        // 3.2：按份且有填每份克重時，順便補出每100克碳水。
+        const servingGrams = line.unit === "serving" ? line.servingGrams : null;
+        const derived = deriveCarbs(
+          servingGrams,
+          line.unit === "serving" ? line.carbsPerUnit : null,
+          line.unit === "gram" ? line.carbsPerUnit : null,
+        );
         food = await createFood(supabase, {
           brand,
           name,
-          carbs_per_serving: line.unit === "serving" ? line.carbsPerUnit : null,
-          carbs_per_100g: line.unit === "gram" ? line.carbsPerUnit : null,
+          carbs_per_serving: derived.carbs_per_serving,
+          carbs_per_100g: derived.carbs_per_100g,
+          serving_grams: servingGrams,
         });
         byKey.set(key, food);
       }
