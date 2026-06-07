@@ -153,6 +153,10 @@ export type Settings = {
   breakfast_end_hour: number; // 此時前算早餐
   lunch_end_hour: number; // 此時前算午餐
   dinner_end_hour: number; // 此時前算晚餐，之後算點心
+  // 進階建議劑量（模組一/四）。
+  isf: number | null; // 胰島素敏感因子（每 1 單位降多少 mg/dL）
+  correction_target: number | null; // 校正目標血糖
+  advanced_dose: boolean; // 進階建議劑量開關（含校正劑量與 IOB 扣除）
   updated_at: string;
 };
 
@@ -202,4 +206,7 @@ export type SettingsInput = {
   breakfast_end_hour: number;
   lunch_end_hour: number;
   dinner_end_hour: number;
+  isf: number | null;
+  correction_target: number | null;
+  advanced_dose: boolean;
 };

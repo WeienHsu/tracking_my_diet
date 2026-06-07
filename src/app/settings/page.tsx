@@ -12,6 +12,9 @@ const DEFAULTS: SettingsInput = {
   target_glucose_low: 80,
   target_glucose_high: 180,
   ...DEFAULT_MEAL_RANGE,
+  isf: null,
+  correction_target: null,
+  advanced_dose: false,
 };
 
 export default async function SettingsPage() {
@@ -32,6 +35,9 @@ export default async function SettingsPage() {
           settings.breakfast_end_hour ?? DEFAULTS.breakfast_end_hour,
         lunch_end_hour: settings.lunch_end_hour ?? DEFAULTS.lunch_end_hour,
         dinner_end_hour: settings.dinner_end_hour ?? DEFAULTS.dinner_end_hour,
+        isf: settings.isf ?? null,
+        correction_target: settings.correction_target ?? null,
+        advanced_dose: settings.advanced_dose ?? false,
       }
     : DEFAULTS;
 

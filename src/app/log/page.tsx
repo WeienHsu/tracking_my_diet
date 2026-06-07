@@ -4,11 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import { listFoods } from "@/lib/repositories/foods";
 import { listMeals } from "@/lib/repositories/meals";
 import { getSettings } from "@/lib/repositories/settings";
+import { estimateIcrIsf, DEFAULT_WINDOW_DAYS } from "@/lib/analysis";
 import {
   DEFAULT_MEAL_RANGE,
   type Meal,
   type MealFood,
   type MealRange,
+  type Settings,
 } from "@/lib/types";
 import LogForm from "./LogForm";
 
@@ -43,6 +45,21 @@ export default async function LogPage() {
   const meals: Meal[] = mealsWithFoods;
   const mealFoods: MealFood[] = mealsWithFoods.flatMap((m) => m.meal_foods);
 
+  // 進階建議劑量設定（模組一/四）。
+  const isf = settings?.isf ?? null;
+  const correctionTarget = settings?.correction_target ?? null;
+  const advancedDose = settings?.advanced_dose ?? false;
+
+  // 1.2：反推 ICR（近 N 天），記錄頁可一鍵切換採用。
+  const estSettings = (settings ?? {
+    icr,
+    target_glucose_low: target.low,
+    target_glucose_high: target.high,
+  }) as Settings;
+  const icrEstimate = estimateIcrIsf(meals, estSettings, {
+    windowDays: DEFAULT_WINDOW_DAYS,
+  }).icr;
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-5 px-5 py-8">
       <div className="flex items-center justify-between">
@@ -67,6 +84,10 @@ export default async function LogPage() {
         meals={meals}
         mealFoods={mealFoods}
         target={target}
+        isf={isf}
+        correctionTarget={correctionTarget}
+        advancedDose={advancedDose}
+        icrEstimate={icrEstimate}
       />
     </main>
   );

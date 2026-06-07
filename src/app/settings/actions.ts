@@ -17,6 +17,9 @@ const SettingsSchema = z.object({
   breakfast_end_hour: hour,
   lunch_end_hour: hour,
   dinner_end_hour: hour,
+  isf: z.number().positive("ISF 必須大於 0").nullable(),
+  correction_target: z.number().positive().nullable(),
+  advanced_dose: z.boolean(),
 });
 
 export async function saveSettingsAction(

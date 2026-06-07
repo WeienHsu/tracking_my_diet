@@ -14,6 +14,8 @@ import {
   searchFoodAggregates,
   foodResiduals,
   foodImpactAdaptive,
+  insulinOnBoard,
+  suggestDose,
 } from "./index";
 
 // ---- 測試用建構子 ----
@@ -62,6 +64,9 @@ const SETTINGS: Settings = {
   breakfast_end_hour: 11,
   lunch_end_hour: 16,
   dinner_end_hour: 21,
+  isf: null,
+  correction_target: null,
+  advanced_dose: false,
   updated_at: "2026-06-01T00:00:00Z",
 };
 
@@ -391,6 +396,68 @@ describe("嶺迴歸／共線穩定（5.1）", () => {
     expect(r.method).not.toBe("insufficient");
     expect(r.icr).not.toBeNull();
     expect(Number.isFinite(r.icr as number)).toBe(true);
+  });
+});
+
+// ---- 模組四 4.1：IOB ----
+
+describe("insulinOnBoard", () => {
+  it("線性衰減：2 小時前打 8 單位（4h 歸零）→ 剩 4", () => {
+    const now = new Date("2026-06-01T12:00:00Z");
+    const meals = [
+      makeMeal({ id: "a", eaten_at: "2026-06-01T10:00:00Z", insulin_units: 8 }),
+    ];
+    expect(insulinOnBoard(meals, now)).toBeCloseTo(4, 6);
+  });
+
+  it("超過作用時間或未來的劑量不計", () => {
+    const now = new Date("2026-06-01T12:00:00Z");
+    const meals = [
+      makeMeal({ id: "old", eaten_at: "2026-06-01T06:00:00Z", insulin_units: 10 }), // 6h 前
+      makeMeal({ id: "future", eaten_at: "2026-06-01T13:00:00Z", insulin_units: 10 }),
+    ];
+    expect(insulinOnBoard(meals, now)).toBe(0);
+  });
+});
+
+// ---- 模組一 1.1：建議劑量 ----
+
+describe("suggestDose", () => {
+  it("基本模式只用碳水 ÷ ICR", () => {
+    const r = suggestDose({ carbs: 50, icr: 5, advanced: false });
+    expect(r.dose).toBeCloseTo(10, 6);
+    expect(r.correction).toBe(0);
+    expect(r.iob).toBe(0);
+  });
+
+  it("進階：加校正劑量並扣 IOB", () => {
+    // 碳水 50/ICR5=10；餐前 160、目標 120、ISF 40 → 校正 +1；IOB 2 → 11
+    const r = suggestDose({
+      carbs: 50,
+      icr: 5,
+      advanced: true,
+      isf: 40,
+      glucoseBefore: 160,
+      correctionTarget: 120,
+      iob: 2,
+    });
+    expect(r.base).toBeCloseTo(10, 6);
+    expect(r.correction).toBeCloseTo(1, 6);
+    expect(r.iob).toBe(2);
+    expect(r.dose).toBeCloseTo(9, 6);
+  });
+
+  it("建議劑量不會低於 0", () => {
+    const r = suggestDose({
+      carbs: 10,
+      icr: 5,
+      advanced: true,
+      isf: 40,
+      glucoseBefore: 70,
+      correctionTarget: 120,
+      iob: 3,
+    });
+    expect(r.dose).toBe(0);
   });
 });
 

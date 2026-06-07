@@ -15,6 +15,9 @@ const DEFAULT_SETTINGS: Settings = {
   target_glucose_low: 80,
   target_glucose_high: 180,
   ...DEFAULT_MEAL_RANGE,
+  isf: null,
+  correction_target: null,
+  advanced_dose: false,
   updated_at: "",
 };
 

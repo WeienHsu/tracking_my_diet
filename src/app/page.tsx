@@ -1,9 +1,29 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { listMeals } from "@/lib/repositories/meals";
+import { listMeals, type MealWithFoods } from "@/lib/repositories/meals";
 import { listA1c } from "@/lib/repositories/a1c";
 import { buildTrend } from "@/lib/analysis";
+import { foodLabel, MEAL_TYPE_LABELS } from "@/lib/types";
 import HomeCharts from "./HomeCharts";
+import PendingGlucoseCard, { type PendingMeal } from "./PendingGlucoseCard";
+
+// 4.2：找出 1.5–3 小時前、尚未填餐後血糖的餐（抽成函式，避免在元件本體呼叫 Date）。
+function computePending(meals: MealWithFoods[]): PendingMeal[] {
+  const now = Date.now();
+  return meals
+    .filter((m) => m.glucose_after == null)
+    .filter((m) => {
+      const h = (now - new Date(m.eaten_at).getTime()) / 3_600_000;
+      return h >= 1.5 && h <= 3;
+    })
+    .map((m) => ({
+      id: m.id,
+      eatenAt: m.eaten_at,
+      label:
+        m.meal_foods.map((f) => foodLabel(f.food_brand, f.food_name)).join("、") ||
+        MEAL_TYPE_LABELS[m.meal_type],
+    }));
+}
 
 export default async function Home() {
   const supabase = await createClient();
@@ -32,6 +52,10 @@ export default async function Home() {
   ]);
 
   const trend = buildTrend(meals);
+
+  // 4.2：1.5–3 小時前、尚未填餐後血糖的餐，列在首頁可一鍵補填。
+  const pending = computePending(meals);
+
   // A1C 由舊到新；measured_at 為 YYYY-MM-DD。
   const a1c = [...a1cRecords].reverse().map((r) => ({
     t: new Date(r.measured_at).toLocaleDateString("zh-TW", {
@@ -58,6 +82,9 @@ export default async function Home() {
           </button>
         </form>
       </div>
+
+      {/* 4.2：待補填餐後血糖 */}
+      <PendingGlucoseCard pending={pending} />
 
       {/* 導覽 */}
       <div className="grid grid-cols-2 gap-3">

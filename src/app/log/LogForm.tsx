@@ -21,6 +21,9 @@ import {
 import {
   aggregateFoodOutcomes,
   recentFoodEntries,
+  insulinOnBoard,
+  suggestDose,
+  IOB_DURATION_HOURS,
   type FoodOutcomeStats,
   type FoodRecentEntry,
 } from "@/lib/analysis";
@@ -99,6 +102,10 @@ export default function LogForm({
   meals,
   mealFoods,
   target,
+  isf,
+  correctionTarget,
+  advancedDose,
+  icrEstimate,
 }: {
   foods: FoodOption[];
   icr: number;
@@ -106,6 +113,10 @@ export default function LogForm({
   meals: Meal[];
   mealFoods: MealFood[];
   target: { low: number; high: number };
+  isf: number | null;
+  correctionTarget: number | null;
+  advancedDose: boolean;
+  icrEstimate: number | null;
 }) {
   const router = useRouter();
 
@@ -117,6 +128,8 @@ export default function LogForm({
   const [foodLines, setFoodLines] = useState<FoodLine[]>([emptyLine()]);
   const [insulin, setInsulin] = useState("");
   const [doseTouched, setDoseTouched] = useState(false);
+  // 1.2：是否改用反推 ICR 計算建議。
+  const [useEstimatedIcr, setUseEstimatedIcr] = useState(false);
   const [glucoseAfter, setGlucoseAfter] = useState("");
   const [exercise, setExercise] = useState<Exercise>("none");
   const [context, setContext] = useState<MealContext[]>([]);
@@ -135,7 +148,35 @@ export default function LogForm({
     [foodLines],
   );
 
-  const suggestedDose = icr > 0 ? totalCarbs / icr : 0;
+  const glucoseBeforeNum = glucoseBefore === "" ? null : Number(glucoseBefore);
+
+  // 4.1：以「這餐時間」為基準算活性胰島素（只看 4 小時內的既往劑量）。
+  const iob = useMemo(
+    () => insulinOnBoard(meals, new Date(eatenAt)),
+    [meals, eatenAt],
+  );
+
+  // 1.2：可選用反推 ICR。
+  const effectiveIcr =
+    useEstimatedIcr && icrEstimate != null && icrEstimate > 0
+      ? icrEstimate
+      : icr;
+
+  // 1.1 + 4.1：建議劑量（進階關閉時只用碳水 ÷ ICR）。
+  const suggestion = useMemo(
+    () =>
+      suggestDose({
+        carbs: totalCarbs,
+        icr: effectiveIcr,
+        advanced: advancedDose,
+        isf,
+        glucoseBefore: glucoseBeforeNum,
+        correctionTarget,
+        iob,
+      }),
+    [totalCarbs, effectiveIcr, advancedDose, isf, glucoseBeforeNum, correctionTarget, iob],
+  );
+  const suggestedDose = suggestion.dose;
 
   // 使用者尚未手動改動施打量前，顯示建議值（不存進 state，避免 effect）。
   const insulinValue = doseTouched
@@ -510,13 +551,58 @@ export default function LogForm({
           <span className="text-lg font-semibold">{round1(totalCarbs)} g</span>
         </div>
         <div className="mt-2 flex items-center justify-between text-sm">
-          <span className="text-zinc-600 dark:text-zinc-300">建議劑量（碳水 ÷ ICR {icr}）</span>
+          <span className="text-zinc-600 dark:text-zinc-300">
+            建議劑量{advancedDose ? "（進階）" : `（碳水 ÷ ICR ${round1(effectiveIcr)}）`}
+          </span>
           <span className="text-lg font-semibold">
             {round1(suggestedDose)} 單位
           </span>
         </div>
+
+        {/* 進階模式：拆解 碳水/校正/IOB */}
+        {advancedDose && totalCarbs > 0 && (
+          <div className="mt-1.5 flex flex-col gap-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+            <span>
+              碳水 ÷ ICR {round1(effectiveIcr)}：{round1(suggestion.base)} 單位
+            </span>
+            {suggestion.correction !== 0 && (
+              <span>
+                餐前校正（目標 {correctionTarget}、ISF {isf}）：
+                {suggestion.correction > 0 ? "+" : ""}
+                {round1(suggestion.correction)} 單位
+              </span>
+            )}
+            {suggestion.iob > 0 && (
+              <span>活性胰島素扣除：−{round1(suggestion.iob)} 單位</span>
+            )}
+          </div>
+        )}
+
+        {/* 4.1：疊藥警示 */}
+        {iob > 0 && (
+          <p className="mt-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300">
+            ⚠️ 疊藥提醒：{IOB_DURATION_HOURS} 小時內還有約 {round1(iob)} 單位活性胰島素未代謝完。
+            {advancedDose
+              ? "已從建議中扣除，請留意低血糖風險。"
+              : "目前未自動扣除（進階建議劑量關閉），請自行斟酌。"}
+          </p>
+        )}
+
+        {/* 1.2：一鍵切換用反推 ICR */}
+        {icrEstimate != null && icrEstimate > 0 && (
+          <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={useEstimatedIcr}
+              onChange={(e) => setUseEstimatedIcr(e.target.checked)}
+              className="h-4 w-4"
+            />
+            改用近期反推 ICR {round1(icrEstimate)} 計算（設定值為 {round1(icr)}）
+          </label>
+        )}
+
         <p className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-400">
-          ⚠️ 建議劑量僅供參考、由碳水自動換算，<strong>不可取代專業醫療判斷</strong>
+          ⚠️ 建議劑量僅供參考，<strong>不可取代專業醫療判斷</strong>
           。實際施打請依你的醫師／糖尿病衛教師指示。
         </p>
       </div>

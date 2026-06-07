@@ -1019,6 +1019,69 @@ export function foodImpactAdaptive(
     : { mode: "none", items: [] };
 }
 
+// ---- 模組四 4.1：活性胰島素（IOB）----
+//
+// 筆針 MDI 無幫浦資料，用簡化的線性衰減估算：一劑在 durationHours 小時內線性歸零。
+// 僅供「防疊藥」觀察提示，非藥物動力學精算。
+
+export const IOB_DURATION_HOURS = 4;
+
+// 計算到 now 為止、仍殘留的活性胰島素（只看 now 之前 durationHours 內的劑量）。
+export function insulinOnBoard(
+  meals: Meal[],
+  now: Date,
+  durationHours: number = IOB_DURATION_HOURS,
+): number {
+  const t = now.getTime();
+  let iob = 0;
+  for (const m of meals) {
+    if (m.insulin_units <= 0) continue;
+    const elapsed = (t - new Date(m.eaten_at).getTime()) / 3_600_000;
+    if (elapsed <= 0 || elapsed >= durationHours) continue;
+    iob += m.insulin_units * (1 - elapsed / durationHours);
+  }
+  return iob;
+}
+
+// ---- 模組一 1.1：建議劑量（碳水 + 可選校正 − 可選 IOB）----
+
+export type DoseSuggestion = {
+  dose: number; // 最終建議（已下限 0）
+  base: number; // 碳水 ÷ ICR
+  correction: number; // 校正劑量（(餐前 − 目標) ÷ ISF），可正可負；進階關閉時為 0
+  iob: number; // 扣除的活性胰島素；進階關閉時為 0
+  icrUsed: number; // 實際用來算的 ICR
+  advanced: boolean;
+};
+
+export function suggestDose(params: {
+  carbs: number;
+  icr: number;
+  advanced: boolean;
+  isf?: number | null;
+  glucoseBefore?: number | null;
+  correctionTarget?: number | null;
+  iob?: number;
+}): DoseSuggestion {
+  const { carbs, icr, advanced } = params;
+  const base = icr > 0 ? carbs / icr : 0;
+
+  let correction = 0;
+  if (
+    advanced &&
+    params.isf != null &&
+    params.isf > 0 &&
+    params.glucoseBefore != null &&
+    params.correctionTarget != null
+  ) {
+    correction = (params.glucoseBefore - params.correctionTarget) / params.isf;
+  }
+
+  const iob = advanced ? params.iob ?? 0 : 0;
+  const dose = Math.max(0, base + correction - iob);
+  return { dose, base, correction, iob, icrUsed: icr, advanced };
+}
+
 // ---- 線性代數小工具（迴歸用）----
 
 // 最小平方法（可選 L2 嶺迴歸）：解 β 使 Xβ≈y。

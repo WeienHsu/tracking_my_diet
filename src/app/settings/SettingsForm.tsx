@@ -19,6 +19,12 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
   );
   const [lunchEnd, setLunchEnd] = useState(String(initial.lunch_end_hour));
   const [dinnerEnd, setDinnerEnd] = useState(String(initial.dinner_end_hour));
+  // 進階建議劑量（模組一/四）。
+  const [advancedDose, setAdvancedDose] = useState(initial.advanced_dose);
+  const [isf, setIsf] = useState(initial.isf != null ? String(initial.isf) : "");
+  const [correctionTarget, setCorrectionTarget] = useState(
+    initial.correction_target != null ? String(initial.correction_target) : "",
+  );
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{
@@ -36,6 +42,12 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
       return;
     }
 
+    const isfNum = isf.trim() === "" ? null : Number(isf);
+    if (advancedDose && (isfNum == null || !(isfNum > 0))) {
+      setMessage({ type: "err", text: "開啟進階建議劑量時，ISF 必須大於 0。" });
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await saveSettingsAction({
@@ -45,6 +57,10 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
         breakfast_end_hour: Number(breakfastEnd),
         lunch_end_hour: Number(lunchEnd),
         dinner_end_hour: Number(dinnerEnd),
+        isf: isfNum,
+        correction_target:
+          correctionTarget.trim() === "" ? null : Number(correctionTarget),
+        advanced_dose: advancedDose,
       });
       if (!res.ok) {
         setMessage({ type: "err", text: res.error });
@@ -116,6 +132,57 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
           <HourField label="午餐前" value={lunchEnd} onChange={setLunchEnd} />
           <HourField label="晚餐前" value={dinnerEnd} onChange={setDinnerEnd} />
         </div>
+      </div>
+
+      {/* 進階建議劑量（模組一/四）*/}
+      <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={advancedDose}
+            onChange={(e) => setAdvancedDose(e.target.checked)}
+            className="mt-1 h-5 w-5 shrink-0"
+          />
+          <span className="text-sm">
+            <span className="font-medium text-zinc-800 dark:text-zinc-100">
+              啟用進階建議劑量
+            </span>
+            <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+              在「碳水 ÷ ICR」之外，加入餐前血糖校正與活性胰島素（IOB）防疊藥。關閉則維持單純換算。
+            </span>
+          </span>
+        </label>
+
+        {advancedDose && (
+          <div className="flex flex-col gap-3">
+            <Field label="ISF 胰島素敏感因子（每 1 單位約降多少 mg/dL）">
+              <input
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min="0"
+                value={isf}
+                onChange={(e) => setIsf(e.target.value)}
+                placeholder="例：40"
+                className={inputClass}
+              />
+            </Field>
+            <Field label="校正目標血糖（餐前偏離此值才校正，留空則不校正）">
+              <input
+                type="number"
+                inputMode="numeric"
+                value={correctionTarget}
+                onChange={(e) => setCorrectionTarget(e.target.value)}
+                placeholder="例：110"
+                className={inputClass}
+              />
+            </Field>
+            <p className="text-xs leading-5 text-amber-700 dark:text-amber-400">
+              ⚠️ 進階建議會算出更接近「可直接施打」的數字，但<strong>仍僅供參考、不可取代專業醫療判斷</strong>。
+              ISF／目標血糖請與你的醫師／衛教師確認；校正與疊藥估算為簡化模型。
+            </p>
+          </div>
+        )}
       </div>
 
       {message && (
