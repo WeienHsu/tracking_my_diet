@@ -90,12 +90,14 @@ export default async function Home() {
       {/* 血糖 + A1C 線圖 */}
       <HomeCharts trend={trend} a1c={a1c} />
 
-      <Link
-        href="/settings"
-        className="self-center text-sm text-zinc-600 dark:text-zinc-300 underline"
-      >
-        設定
-      </Link>
+      <div className="flex justify-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
+        <Link href="/foods" className="underline">
+          食物庫
+        </Link>
+        <Link href="/settings" className="underline">
+          設定
+        </Link>
+      </div>
     </main>
   );
 }

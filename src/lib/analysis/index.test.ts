@@ -10,6 +10,7 @@ import {
   mealTypeIcrHints,
   icrConfidenceTrend,
   aggregateFoodOutcomes,
+  recentFoodEntries,
   searchFoodAggregates,
   foodResiduals,
   foodImpactAdaptive,
@@ -495,6 +496,66 @@ describe("aggregateFoodOutcomes", () => {
     expect(
       aggregateFoodOutcomes({ brand: "星巴克", name: "拿鐵" }, meals, mealFoods, SETTINGS).all.n,
     ).toBe(1);
+  });
+});
+
+// ---- 階段 2.3：劑量比例化（每份／每100克施打）----
+
+describe("劑量比例化", () => {
+  it("份制：單獨吃取每份施打中位數", () => {
+    const meals = [
+      makeMeal({ id: "s1", insulin_units: 8 }),
+      makeMeal({ id: "s2", insulin_units: 12 }),
+    ];
+    const mealFoods = [
+      makeMealFood({ meal_id: "s1", food_name: "白飯", carbs: 60, unit: "serving", amount: 2 }), // 4/份
+      makeMealFood({ meal_id: "s2", food_name: "白飯", carbs: 90, unit: "serving", amount: 3 }), // 4/份
+    ];
+    const agg = aggregateFoodOutcomes({ name: "白飯" }, meals, mealFoods, SETTINGS);
+    expect(agg.solo.dosePerServing).toBeCloseTo(4, 6);
+    expect(agg.solo.dosePer100g).toBeNull();
+  });
+
+  it("克制：單獨吃取每100克施打中位數", () => {
+    const meals = [makeMeal({ id: "g1", insulin_units: 6 })];
+    const mealFoods = [
+      makeMealFood({ meal_id: "g1", food_name: "地瓜", carbs: 39, unit: "gram", amount: 150 }), // 6/150*100=4
+    ];
+    const agg = aggregateFoodOutcomes({ name: "地瓜" }, meals, mealFoods, SETTINGS);
+    expect(agg.solo.dosePer100g).toBeCloseTo(4, 6);
+    expect(agg.solo.dosePerServing).toBeNull();
+  });
+});
+
+// ---- 階段 2.1：最近 N 次吃法 ----
+
+describe("recentFoodEntries", () => {
+  it("回傳最近 N 次（新到舊），含份量/劑量/餐前後", () => {
+    const meals = [
+      makeMeal({ id: "m1", eaten_at: dayIso(1), insulin_units: 5, glucose_before: 100, glucose_after: 140 }),
+      makeMeal({ id: "m2", eaten_at: dayIso(3), insulin_units: 8, glucose_before: 110, glucose_after: 160 }),
+      makeMeal({ id: "m3", eaten_at: dayIso(2), insulin_units: 6, glucose_before: 90, glucose_after: 130 }),
+    ];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_name: "白飯", carbs: 50, unit: "serving", amount: 1 }),
+      makeMealFood({ meal_id: "m2", food_name: "白飯", carbs: 100, unit: "serving", amount: 2 }),
+      makeMealFood({ meal_id: "m3", food_name: "白飯", carbs: 75, unit: "gram", amount: 150 }),
+    ];
+    const r = recentFoodEntries({ name: "白飯" }, meals, mealFoods);
+    expect(r).toHaveLength(3);
+    expect(r[0].eatenAt).toBe(dayIso(3)); // 最近在前
+    expect(r[0].amount).toBe(2);
+    expect(r[0].insulinUnits).toBe(8);
+    expect(recentFoodEntries({ name: "白飯" }, meals, mealFoods, 2)).toHaveLength(2);
+  });
+
+  it("完全比對：查「豆腐」不命中「板豆腐」", () => {
+    const meals = [makeMeal({ id: "m1" }), makeMeal({ id: "m2" })];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_name: "豆腐" }),
+      makeMealFood({ meal_id: "m2", food_name: "板豆腐" }),
+    ];
+    expect(recentFoodEntries({ name: "豆腐" }, meals, mealFoods)).toHaveLength(1);
   });
 });
 

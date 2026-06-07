@@ -4,7 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { listFoods, createFood } from "@/lib/repositories/foods";
+import { listFoods, createFood, updateFood } from "@/lib/repositories/foods";
 import { createMeal } from "@/lib/repositories/meals";
 import { foodCarbs } from "@/lib/types";
 import {
@@ -116,4 +116,44 @@ export async function createMealAction(data: LogMealData): Promise<ActionResult>
 // 食物去重鍵：品牌（可空）+ 食物名，皆 trim/lower。
 function foodKey(brand: string | null, name: string): string {
   return `${(brand ?? "").trim().toLowerCase()}|${name.trim().toLowerCase()}`;
+}
+
+// 3.1：把這次記錄微調過的碳水，同步成食物庫的預設值（使用者按下確認才呼叫）。
+const SyncFoodSchema = z.object({
+  brand: z.string().nullable(),
+  name: z.string().trim().min(1),
+  unit: z.enum(["serving", "gram"]),
+  carbsPerUnit: z.number().positive(),
+});
+
+export async function syncFoodDefaultAction(
+  input: z.infer<typeof SyncFoodSchema>,
+): Promise<ActionResult> {
+  const parsed = SyncFoodSchema.safeParse(input);
+  if (!parsed.success) return zodError(parsed.error);
+  const { brand, name, unit, carbsPerUnit } = parsed.data;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  try {
+    const foods = await listFoods(supabase);
+    const key = foodKey(brand?.trim() || null, name);
+    const food = foods.find((f) => foodKey(f.brand, f.name) === key);
+    if (!food) return { ok: false, error: "找不到對應的食物。" };
+    await updateFood(
+      supabase,
+      food.id,
+      unit === "serving"
+        ? { carbs_per_serving: carbsPerUnit }
+        : { carbs_per_100g: carbsPerUnit },
+    );
+    revalidatePath("/log");
+    return { ok: true };
+  } catch (e) {
+    return caughtError(e);
+  }
 }

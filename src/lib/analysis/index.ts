@@ -5,6 +5,7 @@ import {
   type Meal,
   type MealFood,
   type MealType,
+  type FoodUnit,
   type Settings,
 } from "@/lib/types";
 
@@ -239,6 +240,45 @@ export function foodHistory(
     .sort(
       (a, b) => new Date(b.eatenAt).getTime() - new Date(a.eatenAt).getTime(),
     );
+}
+
+// ---- 階段 2.1：某食物最近 N 次的吃法與結果（記錄頁即時顯示）----
+
+export type FoodRecentEntry = {
+  eatenAt: string;
+  unit: FoodUnit;
+  amount: number; // 份數或克數
+  carbs: number; // 此食物總碳水
+  insulinUnits: number; // 整餐施打（混合餐含其他食物）
+  glucoseBefore: number | null;
+  glucoseAfter: number | null;
+};
+
+// 用嚴格比對（名稱完全相同、有品牌再縮品牌，同 foodMatches）取最近 limit 次。
+export function recentFoodEntries(
+  food: { brand?: string | null; name: string },
+  meals: Meal[],
+  mealFoods: MealFood[],
+  limit = 3,
+): FoodRecentEntry[] {
+  const mealById = new Map(meals.map((m) => [m.id, m]));
+  return mealFoods
+    .filter((mf) => foodMatches(mf, food))
+    .map((mf) => ({ mf, meal: mealById.get(mf.meal_id) }))
+    .filter((x): x is { mf: MealFood; meal: Meal } => x.meal != null)
+    .map(({ mf, meal }) => ({
+      eatenAt: meal.eaten_at,
+      unit: mf.unit ?? "serving",
+      amount: mf.amount ?? mf.quantity ?? 1,
+      carbs: mf.carbs,
+      insulinUnits: meal.insulin_units,
+      glucoseBefore: meal.glucose_before,
+      glucoseAfter: meal.glucose_after,
+    }))
+    .sort(
+      (a, b) => new Date(b.eatenAt).getTime() - new Date(a.eatenAt).getTime(),
+    )
+    .slice(0, limit);
 }
 
 // ---- 階段 1-A：clean-meal 過濾（排除「不正常的餐」）----
@@ -599,6 +639,10 @@ export type FoodOutcomeStats = {
   low: number;
   typicalDose: number | null; // 整餐施打中位數（單獨吃時即為此食物劑量）
   typicalCarbs: number | null; // 此食物碳水中位數
+  // 階段 2.3：劑量比例化（每份／每100克施打中位數，避免「吃少打多」）。
+  // 僅單獨吃時有意義（混合餐的劑量含其他食物）；無對應計量的餐則為 null。
+  dosePerServing: number | null; // 份制：每份施打單位
+  dosePer100g: number | null; // 克制：每 100 克施打單位
 };
 
 export type FoodAggregate = {
@@ -608,7 +652,13 @@ export type FoodAggregate = {
   mixed: FoodOutcomeStats; // 混合餐
 };
 
-type FoodMealRow = { landing: Landing | null; dose: number; foodCarbs: number };
+type FoodMealRow = {
+  landing: Landing | null;
+  dose: number;
+  foodCarbs: number;
+  unit: FoodUnit;
+  amount: number; // 此食物在該餐的量（份數或克數）
+};
 
 // 食物比對：名稱「完全相同」（避免「豆腐」誤命中「板豆腐」）；
 // 有填品牌時再縮到品牌也相同（品牌為選填的精確化條件）。皆 trim + 小寫。
@@ -640,12 +690,21 @@ function aggregateRows(
     itemCount.set(mf.meal_id, (itemCount.get(mf.meal_id) ?? 0) + 1);
   }
 
-  // 命中此食物的餐次，同一餐多列則加總碳水。
+  // 命中此食物的餐次，同一餐多列則加總碳水與量（同計量單位才加總）。
   const foodCarbsByMeal = new Map<string, number>();
+  const foodAmountByMeal = new Map<string, { unit: FoodUnit; amount: number }>();
   for (const mf of mealFoods) {
     if (!match(mf)) continue;
-    const c = mf.carbs;
-    foodCarbsByMeal.set(mf.meal_id, (foodCarbsByMeal.get(mf.meal_id) ?? 0) + c);
+    foodCarbsByMeal.set(
+      mf.meal_id,
+      (foodCarbsByMeal.get(mf.meal_id) ?? 0) + mf.carbs,
+    );
+    const unit = mf.unit ?? "serving";
+    const amount = mf.amount ?? mf.quantity ?? 1;
+    const prev = foodAmountByMeal.get(mf.meal_id);
+    // 同餐同食物多列、且單位一致才把量加總；單位不一致則以第一列為準。
+    if (!prev) foodAmountByMeal.set(mf.meal_id, { unit, amount });
+    else if (prev.unit === unit) prev.amount += amount;
   }
 
   const soloRows: FoodMealRow[] = [];
@@ -653,6 +712,7 @@ function aggregateRows(
   for (const [mealId, foodCarbs] of foodCarbsByMeal) {
     const meal = mealById.get(mealId);
     if (!meal) continue;
+    const amt = foodAmountByMeal.get(mealId) ?? { unit: "serving", amount: 1 };
     const row: FoodMealRow = {
       landing:
         meal.glucose_after != null
@@ -660,6 +720,8 @@ function aggregateRows(
           : null,
       dose: meal.insulin_units,
       foodCarbs,
+      unit: amt.unit,
+      amount: amt.amount,
     };
     if ((itemCount.get(mealId) ?? 0) <= 1) soloRows.push(row);
     else mixedRows.push(row);
@@ -770,6 +832,15 @@ function statsOf(rows: FoodMealRow[]): FoodOutcomeStats {
   }
   const doses = rows.map((r) => r.dose);
   const carbs = rows.map((r) => r.foodCarbs);
+
+  // 劑量比例化（2.3）：份制 → 每份施打；克制 → 每 100 克施打。各取中位數。
+  const perServing = rows
+    .filter((r) => r.unit === "serving" && r.amount > 0)
+    .map((r) => r.dose / r.amount);
+  const per100g = rows
+    .filter((r) => r.unit === "gram" && r.amount > 0)
+    .map((r) => (r.dose / r.amount) * 100);
+
   return {
     n: rows.length,
     ideal,
@@ -777,6 +848,8 @@ function statsOf(rows: FoodMealRow[]): FoodOutcomeStats {
     low,
     typicalDose: doses.length > 0 ? median(doses) : null,
     typicalCarbs: carbs.length > 0 ? median(carbs) : null,
+    dosePerServing: perServing.length > 0 ? median(perServing) : null,
+    dosePer100g: per100g.length > 0 ? median(per100g) : null,
   };
 }
 

@@ -48,6 +48,7 @@ export default async function LogPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">記錄一餐</h1>
         <nav className="flex gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+          <Link href="/foods">食物庫</Link>
           <Link href="/settings">設定</Link>
           <Link href="/">首頁</Link>
         </nav>
