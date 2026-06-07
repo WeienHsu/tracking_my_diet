@@ -9,14 +9,12 @@ import {
   mealTypeIcrHints,
   icrConfidenceTrend,
   foodImpactAdaptive,
+  recentMeals,
   buildTrend,
+  DEFAULT_WINDOW_DAYS,
   type IcrIsfEstimate,
 } from "@/lib/analysis";
-import {
-  DEFAULT_MEAL_RANGE,
-  MEAL_TYPE_LABELS,
-  type Settings,
-} from "@/lib/types";
+import { MEAL_TYPE_LABELS, type Settings } from "@/lib/types";
 import Charts from "./Charts";
 import MonthlyReport from "./MonthlyReport";
 
@@ -26,7 +24,18 @@ const DEFAULT_SETTINGS: Settings = {
   icr: 5,
   target_glucose_low: 80,
   target_glucose_high: 180,
-  ...DEFAULT_MEAL_RANGE,
+  breakfast_center_min: 480,
+  lunch_center_min: 750,
+  dinner_center_min: 1110,
+  meal_window_min: 90,
+  isf: null,
+  correction_target: null,
+  advanced_dose: false,
+  insulin_dia_min: 300,
+  insulin_peak_min: 75,
+  iob_auto_subtract: false,
+  postmeal_window_lo_min: 90,
+  postmeal_window_hi_min: 180,
   updated_at: "",
 };
 
@@ -47,17 +56,21 @@ export default async function AnalysisPage() {
   ]);
   const settings = settingsRow ?? DEFAULT_SETTINGS;
 
+  // 階段 D：ICR/ISF、餐別提示、食物影響只看最近 N 天（貼合當下體質）；
+  // 落點佔比與血糖／信心趨勢仍用全歷史（回顧用）。
+  const recent = recentMeals(meals, DEFAULT_WINDOW_DAYS);
+  const recentMealFoods = recent.flatMap((m) => m.meal_foods);
+
   const landing = classifyLanding(meals, settings);
-  const icr = estimateIcrIsf(meals, settings);
-  const hints = mealTypeIcrHints(meals, settings, icr.icr);
+  const icr = estimateIcrIsf(meals, settings, { windowDays: DEFAULT_WINDOW_DAYS });
+  const hints = mealTypeIcrHints(recent, settings, icr.icr);
   const icrTrend = icrConfidenceTrend(meals, settings);
-  const mealFoods = meals.flatMap((m) => m.meal_foods);
 
   // 趨勢圖資料（時間由舊到新）。
   const trend = buildTrend(meals);
 
   // 食物影響（自適應）：有迴歸模型用殘差、否則用單獨吃的每 10g 碳水上升；取前 8 名。
-  const impactResult = foodImpactAdaptive(meals, mealFoods, icr.model);
+  const impactResult = foodImpactAdaptive(recent, recentMealFoods, icr.model);
   const impact = {
     mode: impactResult.mode,
     items: impactResult.items.slice(0, 8).map((it) => ({

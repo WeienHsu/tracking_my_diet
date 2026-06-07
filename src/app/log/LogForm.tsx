@@ -8,9 +8,10 @@ import {
   MEAL_CONTEXT_LABELS,
   FOOD_UNIT_LABELS,
   foodCarbs,
-  mealTypeForHour,
+  foodLabel,
+  mealTypeForMinutes,
   type MealType,
-  type MealRange,
+  type MealCenters,
   type Exercise,
   type MealContext,
   type FoodUnit,
@@ -19,15 +20,20 @@ import {
 } from "@/lib/types";
 import {
   aggregateFoodOutcomes,
+  recentFoodEntries,
+  insulinOnBoard,
+  suggestDose,
   type FoodOutcomeStats,
+  type FoodRecentEntry,
 } from "@/lib/analysis";
-import { createMealAction } from "./actions";
+import { createMealAction, syncFoodDefaultAction } from "./actions";
 
 type FoodOption = {
   brand: string | null;
   name: string;
   carbs_per_serving: number | null;
   carbs_per_100g: number | null;
+  serving_grams: number | null;
 };
 type FoodLine = {
   brand: string;
@@ -35,7 +41,24 @@ type FoodLine = {
   unit: FoodUnit; // 份 / 克
   carbsPerServing: string; // 每份碳水
   carbsPer100g: string; // 每100克碳水
+  servingGrams: string; // 每份克重（選填）
   amount: string; // 份數（serving）或克數（gram）
+};
+
+// 送出後用來比對食物庫預設值（3.1）。
+type SubmitLine = {
+  brand: string | null;
+  name: string;
+  unit: FoodUnit;
+  amount: number;
+  carbsPerUnit: number;
+};
+type SyncPrompt = {
+  brand: string | null;
+  name: string;
+  unit: FoodUnit;
+  carbsPerUnit: number;
+  oldValue: number;
 };
 
 const MEAL_TYPES = Object.keys(MEAL_TYPE_LABELS) as MealType[];
@@ -50,6 +73,7 @@ function emptyLine(): FoodLine {
     unit: "serving",
     carbsPerServing: "",
     carbsPer100g: "",
+    servingGrams: "",
     amount: "1",
   };
 }
@@ -73,28 +97,41 @@ const inputClass =
 export default function LogForm({
   foods,
   icr,
-  mealRange,
+  mealCenters,
   meals,
   mealFoods,
   target,
+  isf,
+  correctionTarget,
+  advancedDose,
+  iobParams,
+  icrEstimate,
 }: {
   foods: FoodOption[];
   icr: number;
-  mealRange: MealRange;
+  mealCenters: MealCenters;
   meals: Meal[];
   mealFoods: MealFood[];
   target: { low: number; high: number };
+  isf: number | null;
+  correctionTarget: number | null;
+  advancedDose: boolean;
+  iobParams: { diaMin: number; peakMin: number; autoSubtract: boolean };
+  icrEstimate: number | null;
 }) {
   const router = useRouter();
 
   const [eatenAt, setEatenAt] = useState(nowLocalInput);
-  const [mealType, setMealType] = useState<MealType>(() =>
-    mealTypeForHour(new Date().getHours(), mealRange),
-  );
+  const [mealType, setMealType] = useState<MealType>(() => {
+    const now = new Date();
+    return mealTypeForMinutes(now.getHours() * 60 + now.getMinutes(), mealCenters);
+  });
   const [glucoseBefore, setGlucoseBefore] = useState("");
   const [foodLines, setFoodLines] = useState<FoodLine[]>([emptyLine()]);
   const [insulin, setInsulin] = useState("");
   const [doseTouched, setDoseTouched] = useState(false);
+  // 1.2：是否改用反推 ICR 計算建議。
+  const [useEstimatedIcr, setUseEstimatedIcr] = useState(false);
   const [glucoseAfter, setGlucoseAfter] = useState("");
   const [exercise, setExercise] = useState<Exercise>("none");
   const [context, setContext] = useState<MealContext[]>([]);
@@ -105,13 +142,48 @@ export default function LogForm({
     type: "ok" | "err";
     text: string;
   } | null>(null);
+  // 3.1：記錄後若微調過的碳水與食物庫預設不同，提示是否同步。
+  const [syncPrompts, setSyncPrompts] = useState<SyncPrompt[]>([]);
 
   const totalCarbs = useMemo(
     () => foodLines.reduce((sum, l) => sum + lineCarbs(l), 0),
     [foodLines],
   );
 
-  const suggestedDose = icr > 0 ? totalCarbs / icr : 0;
+  const glucoseBeforeNum = glucoseBefore === "" ? null : Number(glucoseBefore);
+
+  // 4.1：以「這餐時間」為基準算活性胰島素（指數曲線，依設定的 DIA/peak）。
+  const iob = useMemo(
+    () =>
+      insulinOnBoard(meals, new Date(eatenAt), {
+        diaMin: iobParams.diaMin,
+        peakMin: iobParams.peakMin,
+      }),
+    [meals, eatenAt, iobParams.diaMin, iobParams.peakMin],
+  );
+
+  // 1.2：可選用反推 ICR。
+  const effectiveIcr =
+    useEstimatedIcr && icrEstimate != null && icrEstimate > 0
+      ? icrEstimate
+      : icr;
+
+  // 1.1 + 4.1：建議劑量（進階關閉時只用碳水 ÷ ICR）。
+  const suggestion = useMemo(
+    () =>
+      suggestDose({
+        carbs: totalCarbs,
+        icr: effectiveIcr,
+        advanced: advancedDose,
+        isf,
+        glucoseBefore: glucoseBeforeNum,
+        correctionTarget,
+        iob,
+        subtractIob: iobParams.autoSubtract,
+      }),
+    [totalCarbs, effectiveIcr, advancedDose, isf, glucoseBeforeNum, correctionTarget, iob, iobParams.autoSubtract],
+  );
+  const suggestedDose = suggestion.dose;
 
   // 使用者尚未手動改動施打量前，顯示建議值（不存進 state，避免 effect）。
   const insulinValue = doseTouched
@@ -138,10 +210,27 @@ export default function LogForm({
         patch.carbsPerServing = String(match.carbs_per_serving);
       if (!foodLines[i].carbsPer100g && match.carbs_per_100g != null)
         patch.carbsPer100g = String(match.carbs_per_100g);
+      if (!foodLines[i].servingGrams && match.serving_grams != null)
+        patch.servingGrams = String(match.serving_grams);
       // 庫裡只有克制資料時，預設切到克模式。
       if (match.carbs_per_serving == null && match.carbs_per_100g != null)
         patch.unit = "gram";
     }
+    updateLine(i, patch);
+  }
+
+  // 2.2：點擊推薦食物，整列帶入品牌／營養標示／計量方式。
+  function applyFood(i: number, f: FoodOption) {
+    const patch: Partial<FoodLine> = { name: f.name };
+    if (f.brand) patch.brand = f.brand;
+    if (f.carbs_per_serving != null)
+      patch.carbsPerServing = String(f.carbs_per_serving);
+    if (f.carbs_per_100g != null) patch.carbsPer100g = String(f.carbs_per_100g);
+    if (f.serving_grams != null) patch.servingGrams = String(f.serving_grams);
+    patch.unit =
+      f.carbs_per_serving == null && f.carbs_per_100g != null
+        ? "gram"
+        : "serving";
     updateLine(i, patch);
   }
 
@@ -153,6 +242,18 @@ export default function LogForm({
     setFoodLines((lines) =>
       lines.length === 1 ? lines : lines.filter((_, idx) => idx !== i),
     );
+  }
+
+  // 3.1：確認把微調後的碳水同步為食物庫預設值。
+  async function confirmSync(p: SyncPrompt) {
+    const res = await syncFoodDefaultAction({
+      brand: p.brand,
+      name: p.name,
+      unit: p.unit,
+      carbsPerUnit: p.carbsPerUnit,
+    });
+    setSyncPrompts((prev) => prev.filter((x) => x !== p));
+    if (res.ok) router.refresh();
   }
 
   function toggleContext(c: MealContext) {
@@ -174,6 +275,10 @@ export default function LogForm({
         carbsPerUnit: Number(
           l.unit === "gram" ? l.carbsPer100g : l.carbsPerServing,
         ),
+        servingGrams:
+          l.unit === "serving" && l.servingGrams.trim() !== ""
+            ? Number(l.servingGrams)
+            : null,
       }))
       .filter(
         (l) =>
@@ -191,17 +296,27 @@ export default function LogForm({
 
     setSubmitting(true);
     try {
-      await createMealAction({
+      const res = await createMealAction({
         eatenAt: new Date(eatenAt).toISOString(),
         mealType,
         glucoseBefore: glucoseBefore === "" ? null : Number(glucoseBefore),
         insulinUnits: Number(insulinValue) || 0,
         glucoseAfter: glucoseAfter === "" ? null : Number(glucoseAfter),
+        // 餐後血糖若在記錄當下填入，量測時間預設為現在（之後可在歷史頁修正）。
+        glucoseAfterAt: glucoseAfter === "" ? null : new Date().toISOString(),
         exercise,
         context,
         note: note.trim() || null,
         foods: lines,
       });
+
+      if (!res.ok) {
+        setMessage({ type: "err", text: res.error });
+        return;
+      }
+
+      // 3.1：列出與食物庫預設不同、可同步的項目。
+      setSyncPrompts(computeSyncPrompts(lines, foods));
 
       // 重設可變欄位，保留時間/餐別以利連續記錄。
       setFoodLines([emptyLine()]);
@@ -306,6 +421,12 @@ export default function LogForm({
                   ×
                 </button>
               </div>
+              {/* 2.2：相近食物推薦（包含比對，點擊帶入） */}
+              <FoodSuggestions
+                query={line.name}
+                foods={foods}
+                onPick={(f) => applyFood(i, f)}
+              />
               {/* 計量方式：按份 / 按克數 */}
               <div className="grid grid-cols-2 gap-2">
                 {FOOD_UNITS.map((u) => (
@@ -386,6 +507,25 @@ export default function LogForm({
                   </>
                 )}
               </div>
+              {/* 3.2：按份時可選填「每份克重」，新食物會記下、之後可份↔克換算 */}
+              {line.unit === "serving" && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    每份克重（選填，例：一份 50 克）
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    value={line.servingGrams}
+                    onChange={(e) =>
+                      updateLine(i, { servingGrams: e.target.value })
+                    }
+                    placeholder="填了可自動補每100克碳水"
+                    className={inputClass}
+                  />
+                </label>
+              )}
               {lineCarbs(line) > 0 && (
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   這項約 {round1(lineCarbs(line))} g 碳水
@@ -420,13 +560,59 @@ export default function LogForm({
           <span className="text-lg font-semibold">{round1(totalCarbs)} g</span>
         </div>
         <div className="mt-2 flex items-center justify-between text-sm">
-          <span className="text-zinc-600 dark:text-zinc-300">建議劑量（碳水 ÷ ICR {icr}）</span>
+          <span className="text-zinc-600 dark:text-zinc-300">
+            建議劑量{advancedDose ? "（進階）" : `（碳水 ÷ ICR ${round1(effectiveIcr)}）`}
+          </span>
           <span className="text-lg font-semibold">
             {round1(suggestedDose)} 單位
           </span>
         </div>
+
+        {/* 進階模式：拆解 碳水/校正/IOB */}
+        {advancedDose && totalCarbs > 0 && (
+          <div className="mt-1.5 flex flex-col gap-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+            <span>
+              碳水 ÷ ICR {round1(effectiveIcr)}：{round1(suggestion.base)} 單位
+            </span>
+            {suggestion.correction !== 0 && (
+              <span>
+                餐前校正（目標 {correctionTarget}、ISF {isf}）：
+                {suggestion.correction > 0 ? "+" : ""}
+                {round1(suggestion.correction)} 單位
+              </span>
+            )}
+            {suggestion.iob > 0 && (
+              <span>活性胰島素扣除：−{round1(suggestion.iob)} 單位</span>
+            )}
+          </div>
+        )}
+
+        {/* 4.1：疊藥警示 */}
+        {iob > 0 && (
+          <p className="mt-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300">
+            ⚠️ 疊藥提醒：還有約 {round1(iob)} 單位活性胰島素未代謝完（作用時間約{" "}
+            {round1(iobParams.diaMin / 60)} 小時）。
+            {advancedDose && iobParams.autoSubtract
+              ? "已從建議中扣除，請留意低血糖風險。"
+              : "目前未自動扣除，請自行斟酌。"}
+          </p>
+        )}
+
+        {/* 1.2：一鍵切換用反推 ICR */}
+        {icrEstimate != null && icrEstimate > 0 && (
+          <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={useEstimatedIcr}
+              onChange={(e) => setUseEstimatedIcr(e.target.checked)}
+              className="h-4 w-4"
+            />
+            改用近期反推 ICR {round1(icrEstimate)} 計算（設定值為 {round1(icr)}）
+          </label>
+        )}
+
         <p className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-400">
-          ⚠️ 建議劑量僅供參考、由碳水自動換算，<strong>不可取代專業醫療判斷</strong>
+          ⚠️ 建議劑量僅供參考，<strong>不可取代專業醫療判斷</strong>
           。實際施打請依你的醫師／糖尿病衛教師指示。
         </p>
       </div>
@@ -528,6 +714,45 @@ export default function LogForm({
         </p>
       )}
 
+      {/* 3.1：同步食物庫預設值的提示 */}
+      {syncPrompts.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
+          <p className="font-medium text-amber-800 dark:text-amber-300">
+            這次碳水與食物庫預設不同，要更新為預設嗎？
+          </p>
+          {syncPrompts.map((p, i) => (
+            <div
+              key={i}
+              className="flex flex-wrap items-center justify-between gap-2"
+            >
+              <span className="text-zinc-700 dark:text-zinc-200">
+                {foodLabel(p.brand, p.name)}：
+                {p.unit === "gram" ? "每100克" : "每份"} {round1(p.oldValue)} →{" "}
+                {round1(p.carbsPerUnit)} g
+              </span>
+              <span className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => confirmSync(p)}
+                  className="rounded-lg bg-black dark:bg-white px-3 py-1 font-medium text-white dark:text-black"
+                >
+                  更新
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSyncPrompts((prev) => prev.filter((x) => x !== p))
+                  }
+                  className="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1 text-zinc-600 dark:text-zinc-300"
+                >
+                  略過
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <button
         type="submit"
         disabled={submitting}
@@ -536,6 +761,48 @@ export default function LogForm({
         {submitting ? "記錄中…" : "記錄這一餐"}
       </button>
     </form>
+  );
+}
+
+// 2.2：依輸入字串「包含比對」推薦庫裡相近的食物（已完全相符則不再推薦）。
+function FoodSuggestions({
+  query,
+  foods,
+  onPick,
+}: {
+  query: string;
+  foods: FoodOption[];
+  onPick: (f: FoodOption) => void;
+}) {
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 1) return [];
+    return foods
+      .filter((f) => {
+        if (f.name.trim().toLowerCase() === q) return false; // 已完全相符
+        return (
+          f.name.toLowerCase().includes(q) ||
+          (f.brand?.toLowerCase().includes(q) ?? false)
+        );
+      })
+      .slice(0, 5);
+  }, [query, foods]);
+
+  if (matches.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {matches.map((f, idx) => (
+        <button
+          type="button"
+          key={idx}
+          onClick={() => onPick(f)}
+          className="rounded-full border border-zinc-300 dark:border-zinc-600 px-2.5 py-1 text-xs text-zinc-600 dark:text-zinc-300"
+        >
+          {foodLabel(f.brand, f.name)}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -562,6 +829,12 @@ function FoodStats({
     });
   }, [brand, name, meals, mealFoods, target]);
 
+  // 2.1：最近 3 次的吃法與結果。
+  const recent = useMemo(() => {
+    if (name.trim().length < 1) return [];
+    return recentFoodEntries({ brand, name }, meals, mealFoods, 3);
+  }, [brand, name, meals, mealFoods]);
+
   if (!agg || agg.all.n === 0) return null;
 
   return (
@@ -574,6 +847,7 @@ function FoodStats({
           label="單獨吃"
           tag="此食物劑量"
           stats={agg.solo}
+          showPerUnit
         />
       )}
       {agg.mixed.n > 0 && (
@@ -583,6 +857,18 @@ function FoodStats({
           stats={agg.mixed}
         />
       )}
+      {recent.length > 0 && (
+        <div className="mt-1.5 border-t border-zinc-200 dark:border-zinc-700 pt-1.5">
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">最近 {recent.length} 次</p>
+          <ul className="mt-0.5 flex flex-col gap-0.5">
+            {recent.map((e, i) => (
+              <li key={i} className="text-[11px] text-zinc-600 dark:text-zinc-300">
+                {recentLine(e)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p className="mt-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-400">
         ⚠️ 僅為過去紀錄的觀察統計，<strong>不可取代專業醫療判斷</strong>。
       </p>
@@ -590,14 +876,32 @@ function FoodStats({
   );
 }
 
+// 一行最近紀錄：「6/1 ・ 2份 ・ 打8 ・ 110→160」。
+function recentLine(e: FoodRecentEntry): string {
+  const date = new Date(e.eatenAt).toLocaleDateString("zh-TW", {
+    month: "numeric",
+    day: "numeric",
+  });
+  const amt = e.unit === "gram" ? `${round1(e.amount)}g` : `${round1(e.amount)}份`;
+  const glucose =
+    e.glucoseBefore != null && e.glucoseAfter != null
+      ? `${e.glucoseBefore}→${e.glucoseAfter}`
+      : e.glucoseAfter != null
+        ? `餐後 ${e.glucoseAfter}`
+        : "血糖未填";
+  return `${date}・${amt}・打 ${round1(e.insulinUnits)}・${glucose}`;
+}
+
 function StatsLine({
   label,
   tag,
   stats,
+  showPerUnit = false,
 }: {
   label: string;
   tag: string;
   stats: FoodOutcomeStats;
+  showPerUnit?: boolean;
 }) {
   return (
     <div className="mt-1.5 flex flex-col gap-0.5 text-zinc-600 dark:text-zinc-300">
@@ -610,6 +914,13 @@ function StatsLine({
         </span>
       </div>
       <div className="flex flex-wrap gap-x-3 text-zinc-500 dark:text-zinc-400">
+        {/* 2.3：單獨吃優先顯示「每份／每100克施打」比例，避免吃少打多 */}
+        {showPerUnit && stats.dosePerServing != null && (
+          <span>每份打 {round1(stats.dosePerServing)} 單位</span>
+        )}
+        {showPerUnit && stats.dosePer100g != null && (
+          <span>每100克打 {round1(stats.dosePer100g)} 單位</span>
+        )}
         {stats.typicalDose != null && (
           <span>
             常見{tag} {round1(stats.typicalDose)} 單位
@@ -640,4 +951,32 @@ function Field({
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+// 3.1：與食物庫預設碳水比對，找出這次微調過、值不同的食物。
+function foodKeyOf(brand: string | null, name: string): string {
+  return `${(brand ?? "").trim().toLowerCase()}|${name.trim().toLowerCase()}`;
+}
+
+function computeSyncPrompts(
+  lines: SubmitLine[],
+  foods: FoodOption[],
+): SyncPrompt[] {
+  return lines.flatMap((l) => {
+    const f = foods.find(
+      (x) => foodKeyOf(x.brand, x.name) === foodKeyOf(l.brand, l.name),
+    );
+    if (!f) return [];
+    const stored = l.unit === "gram" ? f.carbs_per_100g : f.carbs_per_serving;
+    if (stored == null || Math.abs(stored - l.carbsPerUnit) < 0.01) return [];
+    return [
+      {
+        brand: l.brand,
+        name: l.name,
+        unit: l.unit,
+        carbsPerUnit: l.carbsPerUnit,
+        oldValue: stored,
+      },
+    ];
+  });
 }
