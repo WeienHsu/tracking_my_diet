@@ -5,6 +5,7 @@ import {
   type Meal,
   type MealFood,
   type MealType,
+  type FoodUnit,
   type Settings,
 } from "@/lib/types";
 
@@ -65,6 +66,16 @@ export const MIN_MEALS_FOR_ESTIMATE = 3;
 // 低資料中位數法的假設 ISF：依 500/1800 臨床通則，ISF/ICR ≈ 1800/500 = 3.6。
 // 僅當作先驗，迴歸法可用後即由實際估計取代。
 export const ASSUMED_ISF_PER_ICR = 3.6;
+
+// 階段 5.3：餐次間隔須大於此小時數才算「獨立乾淨餐」，排除連續進食的雜訊。
+export const MIN_MEAL_GAP_HOURS = 4;
+// 階段 5.2：每多一個時段啞變數，迴歸門檻就多要求這麼多筆，避免參數過多過擬合。
+export const DUMMY_MEALS_PER_PARAM = 5;
+// 階段 5.1：嶺迴歸（L2）的正則化強度係數（相對於特徵尺度）。
+// 只在 OLS 因共線性奇異「當機」時才啟用，故值小、不影響可正常識別的資料。
+const RIDGE_ALPHA = 1e-3;
+// 階段 D：滾動窗口的預設天數（呼叫端可覆寫；引擎本身預設 null＝用全歷史）。
+export const DEFAULT_WINDOW_DAYS = 90;
 
 // ---- 血糖趨勢（時間由舊到新）----
 
@@ -231,6 +242,45 @@ export function foodHistory(
     );
 }
 
+// ---- 階段 2.1：某食物最近 N 次的吃法與結果（記錄頁即時顯示）----
+
+export type FoodRecentEntry = {
+  eatenAt: string;
+  unit: FoodUnit;
+  amount: number; // 份數或克數
+  carbs: number; // 此食物總碳水
+  insulinUnits: number; // 整餐施打（混合餐含其他食物）
+  glucoseBefore: number | null;
+  glucoseAfter: number | null;
+};
+
+// 用嚴格比對（名稱完全相同、有品牌再縮品牌，同 foodMatches）取最近 limit 次。
+export function recentFoodEntries(
+  food: { brand?: string | null; name: string },
+  meals: Meal[],
+  mealFoods: MealFood[],
+  limit = 3,
+): FoodRecentEntry[] {
+  const mealById = new Map(meals.map((m) => [m.id, m]));
+  return mealFoods
+    .filter((mf) => foodMatches(mf, food))
+    .map((mf) => ({ mf, meal: mealById.get(mf.meal_id) }))
+    .filter((x): x is { mf: MealFood; meal: Meal } => x.meal != null)
+    .map(({ mf, meal }) => ({
+      eatenAt: meal.eaten_at,
+      unit: mf.unit ?? "serving",
+      amount: mf.amount ?? mf.quantity ?? 1,
+      carbs: mf.carbs,
+      insulinUnits: meal.insulin_units,
+      glucoseBefore: meal.glucose_before,
+      glucoseAfter: meal.glucose_after,
+    }))
+    .sort(
+      (a, b) => new Date(b.eatenAt).getTime() - new Date(a.eatenAt).getTime(),
+    )
+    .slice(0, limit);
+}
+
 // ---- 階段 1-A：clean-meal 過濾（排除「不正常的餐」）----
 
 // 有運動或任何狀態標籤（生病/壓力/喝酒）的餐視為「不正常」，不納入 ICR/ISF 估算。
@@ -252,6 +302,62 @@ function usableForRegression(m: Meal): boolean {
     m.total_carbs > 0 &&
     m.insulin_units >= 0
   );
+}
+
+// ---- 階段 5.3：獨立乾淨餐（與「前一次任何進食」間隔 > minGapHours）----
+// 以全部餐次（含不正常餐）為進食事件來判定間隔；連續進食的後一餐視為受干擾，排除。
+export function wellSpacedMeals(
+  meals: Meal[],
+  minGapHours: number = MIN_MEAL_GAP_HOURS,
+): Meal[] {
+  const sorted = [...meals].sort(
+    (a, b) => new Date(a.eaten_at).getTime() - new Date(b.eaten_at).getTime(),
+  );
+  const out: Meal[] = [];
+  let prev: number | null = null;
+  for (const m of sorted) {
+    const t = new Date(m.eaten_at).getTime();
+    if (prev == null || (t - prev) / 3_600_000 > minGapHours) out.push(m);
+    prev = t; // 每一餐都是進食事件，無論是否納入。
+  }
+  return out;
+}
+
+// ---- 餐後讀數「有效量測窗」（方案 B′）----
+// 餐後血糖意圖為「餐後約 2 小時」（ADA：用餐開始後 1–2h）。量太晚/太早的讀數時點不一致，
+// 會汙染迴歸；故迴歸只採用落在窗內的讀數。未記量測時間的舊資料視為照舊納入（不破壞既有統計）。
+export const DEFAULT_POSTMEAL_LO_MIN = 90;
+export const DEFAULT_POSTMEAL_HI_MIN = 180;
+
+// 餐後讀數距用餐的分鐘數；未記量測時間回 null。
+export function postMealElapsedMin(m: Meal): number | null {
+  if (m.glucose_after_at == null) return null;
+  return (
+    (new Date(m.glucose_after_at).getTime() - new Date(m.eaten_at).getTime()) /
+    60_000
+  );
+}
+
+// 是否落在有效量測窗（未記時間 → 視為納入）。
+export function withinPostMealWindow(
+  m: Meal,
+  loMin: number = DEFAULT_POSTMEAL_LO_MIN,
+  hiMin: number = DEFAULT_POSTMEAL_HI_MIN,
+): boolean {
+  const elapsed = postMealElapsedMin(m);
+  if (elapsed == null) return true;
+  return elapsed >= loMin && elapsed <= hiMin;
+}
+
+// ---- 階段 D：滾動窗口（只取最近 windowDays 天的餐，貼合當下體質）----
+// 泛型保留輸入型別（如 MealWithFoods 仍帶 meal_foods）。
+export function recentMeals<T extends Meal>(
+  meals: T[],
+  windowDays: number,
+  now: Date = new Date(),
+): T[] {
+  const cutoff = now.getTime() - windowDays * 86_400_000;
+  return meals.filter((m) => new Date(m.eaten_at).getTime() >= cutoff);
 }
 
 // ---- 階段 1-B：自適應 ICR/ISF 估算 ----
@@ -276,15 +382,29 @@ export type IcrIsfEstimate = {
 export function estimateIcrIsf(
   meals: Meal[],
   settings: Settings,
-  opts: { minMealsForRegression?: number } = {},
+  opts: {
+    minMealsForRegression?: number;
+    minGapHours?: number; // 階段 5.3：獨立乾淨餐的最小間隔（小時）
+    windowDays?: number | null; // 階段 D：只取最近 N 天；null＝全歷史
+    now?: Date;
+  } = {},
 ): IcrIsfEstimate {
   const minForReg = opts.minMealsForRegression ?? MIN_MEALS_FOR_REGRESSION;
+  const minGapHours = opts.minGapHours ?? MIN_MEAL_GAP_HOURS;
+  const windowDays = opts.windowDays ?? null;
   const configuredIcr = settings.icr;
 
-  // 只用「正常的餐」估算（排除運動/生病/壓力/喝酒）。
-  const clean = cleanMeals(meals);
+  // 階段 D：先套滾動窗口（若有指定）。
+  const pool = windowDays != null ? recentMeals(meals, windowDays, opts.now) : meals;
+  // 階段 5.3：以全部進食事件判定「獨立乾淨餐」，再與正常餐取交集。
+  const spacedIds = new Set(wellSpacedMeals(pool, minGapHours).map((m) => m.id));
+  const clean = cleanMeals(pool).filter((m) => spacedIds.has(m.id));
+  // B′：只採用餐後讀數落在「有效量測窗」內的餐（未記量測時間的舊資料照舊納入）。
+  const loMin = settings.postmeal_window_lo_min ?? DEFAULT_POSTMEAL_LO_MIN;
+  const hiMin = settings.postmeal_window_hi_min ?? DEFAULT_POSTMEAL_HI_MIN;
+  const windowed = clean.filter((m) => withinPostMealWindow(m, loMin, hiMin));
   // 迴歸法用：含沒打針（胰島素=0）的純碳水餐。
-  const regUsable = clean.filter(usableForRegression);
+  const regUsable = windowed.filter(usableForRegression);
   // 中位數法用：須劑量>0（要算 碳水/劑量）。
   const medianUsable = regUsable.filter((m) => m.insulin_units > 0);
 
@@ -304,12 +424,16 @@ export function estimateIcrIsf(
       icr: null,
       confidence: "low",
       deviates: false,
-      note: `可用餐次僅 ${regUsable.length} 筆（已排除有運動/狀態標記的餐），樣本不足，暫不估算。`,
+      note: `可用餐次僅 ${regUsable.length} 筆（已排除運動/狀態標記與間隔過近的餐），樣本不足，暫不估算。`,
     };
   }
 
+  // 階段 5.2：迴歸門檻隨「實際出現的時段啞變數數量」自適應提高。
+  const dummyCount = Math.max(0, presentMealTypes(regUsable).length - 1);
+  const required = minForReg + DUMMY_MEALS_PER_PARAM * dummyCount;
+
   // 資料夠多且迴歸可解 → 迴歸法（含沒打針的純碳水餐，同時得 ICR、ISF、信心區間）。
-  if (regUsable.length >= minForReg) {
+  if (regUsable.length >= required) {
     const reg = regressionIcrIsf(regUsable);
     if (reg) return { ...reg, configuredIcr, deviates: deviates(reg.icr, configuredIcr) };
   }
@@ -318,28 +442,48 @@ export function estimateIcrIsf(
   return medianIcr(medianUsable, settings);
 }
 
-// 迴歸法：Δ = β0 + β1·碳水 + β2·胰島素，得 a=β1、b=−β2、ISF=b、ICR=b/a。
+// 依固定順序回傳資料中實際出現的餐別（迴歸啞變數以此為準）。
+const MEAL_TYPE_ORDER: MealType[] = ["breakfast", "lunch", "dinner", "snack"];
+function presentMealTypes(meals: Meal[]): MealType[] {
+  return MEAL_TYPE_ORDER.filter((t) => meals.some((m) => m.meal_type === t));
+}
+
+// 迴歸法：Δ = β0 + β1·碳水 + β2·胰島素 (+ 各時段啞變數)，得 a=β1、b=−β2、ISF=b、ICR=b/a。
+// 階段 5.2：資料含多種餐別時，為基準外的各時段加一個啞變數，吸收各時段的基礎血糖漂移，
+//   排除生理時鐘對 a/b 的干擾（只有單一餐別時不加，行為與舊版一致）。
+// 階段 5.1：先用 OLS；若因共線性（如總是照碳水÷ICR 打針）導致 XᵀX 奇異「當機」，
+//   退用嶺迴歸（L2）保證可解、極度穩定。
 function regressionIcrIsf(meals: Meal[]): IcrIsfEstimate | null {
+  const present = presentMealTypes(meals);
+  const dummyTypes = present.slice(1); // 第一個出現的時段當基準。
+
   const X: number[][] = [];
   const y: number[] = [];
   for (const m of meals) {
-    X.push([1, m.total_carbs, m.insulin_units]);
+    const row = [1, m.total_carbs, m.insulin_units];
+    for (const t of dummyTypes) row.push(m.meal_type === t ? 1 : 0);
+    X.push(row);
     y.push((m.glucose_after as number) - (m.glucose_before as number));
   }
 
-  const fit = ols(X, y);
+  let fit = ols(X, y, 0);
+  let ridged = false;
+  if (!fit) {
+    fit = ols(X, y, ridgeLambda(X));
+    ridged = true;
+  }
   if (!fit) return null;
 
-  const [c, beta1, beta2] = fit.beta;
-  const a = beta1;
-  const b = -beta2;
+  const c = fit.beta[0];
+  const a = fit.beta[1];
+  const b = -fit.beta[2];
   // 物理上必須 a>0（碳水升糖）、b>0（胰島素降糖），否則資料被混淆、迴歸不可信。
   if (!(a > 0) || !(b > 0)) return null;
 
   const icr = b / a;
   const isf = b;
 
-  // 變異數：cov = σ²·(XᵀX)⁻¹。ISF=b=−β2 → Var(b)=Var(β2)。
+  // 變異數：cov 為 σ²·夾心矩陣（嶺迴歸時亦適用，λ=0 即退化為 (XᵀX)⁻¹）。
   const varA = fit.cov[1][1];
   const varB = fit.cov[2][2];
   const covAB = -fit.cov[1][2]; // Cov(a,b)=Cov(β1,−β2)=−Cov(β1,β2)
@@ -360,6 +504,11 @@ function regressionIcrIsf(meals: Meal[]): IcrIsfEstimate | null {
   const confidence: IcrIsfEstimate["confidence"] =
     relHalfWidth < 0.15 ? "high" : relHalfWidth < 0.35 ? "mid" : "low";
 
+  const segNote = dummyTypes.length > 0 ? "，並控制各餐別的基礎血糖差異" : "";
+  const note = ridged
+    ? `以嶺迴歸（L2 正則化）估算（資料偏共線，已穩定化）${segNote}，同時得 ICR 與 ISF。`
+    : `以迴歸模型估算（用上所有正常餐次，含偏高/偏低）${segNote}，同時得 ICR 與 ISF。`;
+
   return {
     method: "regression",
     icr,
@@ -371,8 +520,19 @@ function regressionIcrIsf(meals: Meal[]): IcrIsfEstimate | null {
     configuredIcr: 0, // 由呼叫端填入
     deviates: false, // 由呼叫端填入
     model: { a, b, c },
-    note: `以迴歸模型估算（用上所有正常餐次，含偏高/偏低），同時得 ICR 與 ISF。`,
+    note,
   };
+}
+
+// 嶺迴歸正則化強度：相對於非截距欄位的平均尺度，確保 λ 與資料量級相稱。
+function ridgeLambda(X: number[][]): number {
+  const k = X[0].length;
+  let sum = 0;
+  for (let a = 1; a < k; a++) {
+    for (const row of X) sum += row[a] * row[a];
+  }
+  const cols = k - 1;
+  return cols > 0 ? (RIDGE_ALPHA * sum) / cols : RIDGE_ALPHA;
 }
 
 // 偏差校正中位數法：把血糖偏離目標用先驗 ISF 換成劑量差，回推每餐隱含 ICR 取中位數。
@@ -509,6 +669,10 @@ export type FoodOutcomeStats = {
   low: number;
   typicalDose: number | null; // 整餐施打中位數（單獨吃時即為此食物劑量）
   typicalCarbs: number | null; // 此食物碳水中位數
+  // 階段 2.3：劑量比例化（每份／每100克施打中位數，避免「吃少打多」）。
+  // 僅單獨吃時有意義（混合餐的劑量含其他食物）；無對應計量的餐則為 null。
+  dosePerServing: number | null; // 份制：每份施打單位
+  dosePer100g: number | null; // 克制：每 100 克施打單位
 };
 
 export type FoodAggregate = {
@@ -518,7 +682,13 @@ export type FoodAggregate = {
   mixed: FoodOutcomeStats; // 混合餐
 };
 
-type FoodMealRow = { landing: Landing | null; dose: number; foodCarbs: number };
+type FoodMealRow = {
+  landing: Landing | null;
+  dose: number;
+  foodCarbs: number;
+  unit: FoodUnit;
+  amount: number; // 此食物在該餐的量（份數或克數）
+};
 
 // 食物比對：名稱「完全相同」（避免「豆腐」誤命中「板豆腐」）；
 // 有填品牌時再縮到品牌也相同（品牌為選填的精確化條件）。皆 trim + 小寫。
@@ -550,12 +720,21 @@ function aggregateRows(
     itemCount.set(mf.meal_id, (itemCount.get(mf.meal_id) ?? 0) + 1);
   }
 
-  // 命中此食物的餐次，同一餐多列則加總碳水。
+  // 命中此食物的餐次，同一餐多列則加總碳水與量（同計量單位才加總）。
   const foodCarbsByMeal = new Map<string, number>();
+  const foodAmountByMeal = new Map<string, { unit: FoodUnit; amount: number }>();
   for (const mf of mealFoods) {
     if (!match(mf)) continue;
-    const c = mf.carbs;
-    foodCarbsByMeal.set(mf.meal_id, (foodCarbsByMeal.get(mf.meal_id) ?? 0) + c);
+    foodCarbsByMeal.set(
+      mf.meal_id,
+      (foodCarbsByMeal.get(mf.meal_id) ?? 0) + mf.carbs,
+    );
+    const unit = mf.unit ?? "serving";
+    const amount = mf.amount ?? mf.quantity ?? 1;
+    const prev = foodAmountByMeal.get(mf.meal_id);
+    // 同餐同食物多列、且單位一致才把量加總；單位不一致則以第一列為準。
+    if (!prev) foodAmountByMeal.set(mf.meal_id, { unit, amount });
+    else if (prev.unit === unit) prev.amount += amount;
   }
 
   const soloRows: FoodMealRow[] = [];
@@ -563,6 +742,7 @@ function aggregateRows(
   for (const [mealId, foodCarbs] of foodCarbsByMeal) {
     const meal = mealById.get(mealId);
     if (!meal) continue;
+    const amt = foodAmountByMeal.get(mealId) ?? { unit: "serving", amount: 1 };
     const row: FoodMealRow = {
       landing:
         meal.glucose_after != null
@@ -570,6 +750,8 @@ function aggregateRows(
           : null,
       dose: meal.insulin_units,
       foodCarbs,
+      unit: amt.unit,
+      amount: amt.amount,
     };
     if ((itemCount.get(mealId) ?? 0) <= 1) soloRows.push(row);
     else mixedRows.push(row);
@@ -680,6 +862,15 @@ function statsOf(rows: FoodMealRow[]): FoodOutcomeStats {
   }
   const doses = rows.map((r) => r.dose);
   const carbs = rows.map((r) => r.foodCarbs);
+
+  // 劑量比例化（2.3）：份制 → 每份施打；克制 → 每 100 克施打。各取中位數。
+  const perServing = rows
+    .filter((r) => r.unit === "serving" && r.amount > 0)
+    .map((r) => r.dose / r.amount);
+  const per100g = rows
+    .filter((r) => r.unit === "gram" && r.amount > 0)
+    .map((r) => (r.dose / r.amount) * 100);
+
   return {
     n: rows.length,
     ideal,
@@ -687,6 +878,8 @@ function statsOf(rows: FoodMealRow[]): FoodOutcomeStats {
     low,
     typicalDose: doses.length > 0 ? median(doses) : null,
     typicalCarbs: carbs.length > 0 ? median(carbs) : null,
+    dosePerServing: perServing.length > 0 ? median(perServing) : null,
+    dosePer100g: per100g.length > 0 ? median(per100g) : null,
   };
 }
 
@@ -856,12 +1049,116 @@ export function foodImpactAdaptive(
     : { mode: "none", items: [] };
 }
 
+// ---- 模組四 4.1：活性胰島素（IOB）----
+//
+// 用指數衰減曲線（Loop / OpenAPS 的標準做法），由 DIA（作用總時間）與 peak（高峰時間）
+// 兩參數決定，依使用的胰島素設定。比直線真實：先慢、中段快、尾巴拖長。
+// 僅供「防疊藥」觀察提示，非藥物動力學精算。
+
+// 預設為速效類似物（peak 75 分、DIA 300 分 = 5 小時）。
+export const DEFAULT_IOB_DIA_MIN = 300;
+export const DEFAULT_IOB_PEAK_MIN = 75;
+
+// 打針後經過 tMin 分鐘，仍殘留的比例（0~1）。指數雙參數模型。
+// 需 DIA > 2×peak 才有效；否則退回線性近似避免數學爆掉。
+export function iobFraction(
+  tMin: number,
+  diaMin: number = DEFAULT_IOB_DIA_MIN,
+  peakMin: number = DEFAULT_IOB_PEAK_MIN,
+): number {
+  if (tMin <= 0) return 1;
+  if (tMin >= diaMin) return 0;
+
+  const td = diaMin;
+  const tp = peakMin;
+  if (!(td > 2 * tp)) {
+    // 參數不合指數模型 → 線性備援。
+    return 1 - tMin / td;
+  }
+
+  const tau = (tp * (1 - tp / td)) / (1 - (2 * tp) / td);
+  const a = (2 * tau) / td;
+  const S = 1 / (1 - a + (1 + a) * Math.exp(-td / tau));
+  const iob =
+    1 -
+    S *
+      (1 - a) *
+      (((tMin * tMin) / (tau * td * (1 - a)) - tMin / tau - 1) *
+        Math.exp(-tMin / tau) +
+        1);
+  // 數值上夾在 0~1。
+  return Math.min(1, Math.max(0, iob));
+}
+
+// 計算到 now 為止、仍殘留的活性胰島素（加總 now 之前每筆劑量的殘留）。
+export function insulinOnBoard(
+  meals: Meal[],
+  now: Date,
+  opts: { diaMin?: number; peakMin?: number } = {},
+): number {
+  const diaMin = opts.diaMin ?? DEFAULT_IOB_DIA_MIN;
+  const peakMin = opts.peakMin ?? DEFAULT_IOB_PEAK_MIN;
+  const t = now.getTime();
+  let iob = 0;
+  for (const m of meals) {
+    if (m.insulin_units <= 0) continue;
+    const elapsedMin = (t - new Date(m.eaten_at).getTime()) / 60_000;
+    if (elapsedMin <= 0 || elapsedMin >= diaMin) continue;
+    iob += m.insulin_units * iobFraction(elapsedMin, diaMin, peakMin);
+  }
+  return iob;
+}
+
+// ---- 模組一 1.1：建議劑量（碳水 + 可選校正 − 可選 IOB）----
+
+export type DoseSuggestion = {
+  dose: number; // 最終建議（已下限 0）
+  base: number; // 碳水 ÷ ICR
+  correction: number; // 校正劑量（(餐前 − 目標) ÷ ISF），可正可負；進階關閉時為 0
+  iob: number; // 扣除的活性胰島素；進階關閉時為 0
+  icrUsed: number; // 實際用來算的 ICR
+  advanced: boolean;
+};
+
+export function suggestDose(params: {
+  carbs: number;
+  icr: number;
+  advanced: boolean;
+  isf?: number | null;
+  glucoseBefore?: number | null;
+  correctionTarget?: number | null;
+  iob?: number;
+  subtractIob?: boolean; // 是否真的從建議扣 IOB（預設關，僅顯示提醒）
+}): DoseSuggestion {
+  const { carbs, icr, advanced } = params;
+  const base = icr > 0 ? carbs / icr : 0;
+
+  let correction = 0;
+  if (
+    advanced &&
+    params.isf != null &&
+    params.isf > 0 &&
+    params.glucoseBefore != null &&
+    params.correctionTarget != null
+  ) {
+    correction = (params.glucoseBefore - params.correctionTarget) / params.isf;
+  }
+
+  // IOB 只有在進階模式且使用者開啟「自動扣除」時才從建議扣。
+  const iob = advanced && params.subtractIob ? params.iob ?? 0 : 0;
+  const dose = Math.max(0, base + correction - iob);
+  return { dose, base, correction, iob, icrUsed: icr, advanced };
+}
+
 // ---- 線性代數小工具（迴歸用）----
 
-// 普通最小平方法：解 β 使 Xβ≈y，回傳係數與共變異矩陣（cov=σ²(XᵀX)⁻¹）。
+// 最小平方法（可選 L2 嶺迴歸）：解 β 使 Xβ≈y。
+// lambda=0 即一般 OLS、cov=σ²(XᵀX)⁻¹；lambda>0 時 M=XᵀX+λI（不罰截距），
+// cov 用夾心式 σ²·M⁻¹(XᵀX)M⁻¹（λ=0 時退化為 σ²(XᵀX)⁻¹，與舊版一致）。
 function ols(
   X: number[][],
   y: number[],
+  lambda: number = 0,
 ): { beta: number[]; cov: number[][] } | null {
   const n = X.length;
   const k = X[0].length;
@@ -877,10 +1174,14 @@ function ols(
     }
   }
 
-  const xtxInv = invert(xtx);
-  if (!xtxInv) return null; // 奇異（共線性，迴歸不可解）
+  // M = XᵀX + λI（截距 index 0 不正則化）。
+  const m = xtx.map((row, i) =>
+    row.map((v, j) => (i === j && i > 0 ? v + lambda : v)),
+  );
+  const mInv = invert(m);
+  if (!mInv) return null; // 奇異（共線性，迴歸不可解）
 
-  const beta = matVec(xtxInv, xty);
+  const beta = matVec(mInv, xty);
 
   // 殘差變異數 σ² = RSS/(n−k)
   let rss = 0;
@@ -891,8 +1192,27 @@ function ols(
   }
   const sigma2 = rss / (n - k);
 
-  const cov = xtxInv.map((row) => row.map((v) => v * sigma2));
+  // cov = σ²·M⁻¹(XᵀX)M⁻¹
+  const cov = matMul(matMul(mInv, xtx), mInv).map((row) =>
+    row.map((v) => v * sigma2),
+  );
   return { beta, cov };
+}
+
+// 矩陣相乘。
+function matMul(a: number[][], b: number[][]): number[][] {
+  const r = a.length;
+  const c = b[0].length;
+  const inner = b.length;
+  const out = zeros(r, c);
+  for (let i = 0; i < r; i++) {
+    for (let k = 0; k < inner; k++) {
+      const aik = a[i][k];
+      if (aik === 0) continue;
+      for (let j = 0; j < c; j++) out[i][j] += aik * b[k][j];
+    }
+  }
+  return out;
 }
 
 function zeros(r: number, c: number): number[][] {

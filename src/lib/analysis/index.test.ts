@@ -1,16 +1,24 @@
 import { describe, it, expect } from "vitest";
 import type { Meal, MealFood, Settings } from "@/lib/types";
-import { foodCarbs } from "@/lib/types";
+import { foodCarbs, deriveCarbs, mealTypeForMinutes } from "@/lib/types";
 import {
   isCleanMeal,
   cleanMeals,
+  wellSpacedMeals,
+  recentMeals,
   estimateIcrIsf,
   mealTypeIcrHints,
   icrConfidenceTrend,
   aggregateFoodOutcomes,
+  recentFoodEntries,
   searchFoodAggregates,
   foodResiduals,
   foodImpactAdaptive,
+  insulinOnBoard,
+  iobFraction,
+  suggestDose,
+  postMealElapsedMin,
+  withinPostMealWindow,
 } from "./index";
 
 // ---- 測試用建構子 ----
@@ -24,12 +32,18 @@ function makeMeal(p: Partial<Meal> & { id: string }): Meal {
     total_carbs: 30,
     insulin_units: 5,
     glucose_after: 120,
+    glucose_after_at: null,
     exercise: "none",
     context: [],
     note: null,
     created_at: "2026-06-01T08:00:00Z",
     ...p,
   };
+}
+
+// 第 i 天的 08:00（UTC），用來造「間隔 > 4 小時的獨立乾淨餐」（階段 5.3）。
+function dayIso(i: number): string {
+  return new Date(Date.UTC(2026, 0, 1 + i, 8, 0, 0)).toISOString();
 }
 
 function makeMealFood(p: Partial<MealFood> & { meal_id: string }): MealFood {
@@ -51,9 +65,18 @@ const SETTINGS: Settings = {
   icr: 5,
   target_glucose_low: 80,
   target_glucose_high: 180,
-  breakfast_end_hour: 11,
-  lunch_end_hour: 16,
-  dinner_end_hour: 21,
+  breakfast_center_min: 480,
+  lunch_center_min: 750,
+  dinner_center_min: 1110,
+  meal_window_min: 90,
+  isf: null,
+  correction_target: null,
+  advanced_dose: false,
+  insulin_dia_min: 300,
+  insulin_peak_min: 75,
+  iob_auto_subtract: false,
+  postmeal_window_lo_min: 90,
+  postmeal_window_hi_min: 180,
   updated_at: "2026-06-01T00:00:00Z",
 };
 
@@ -74,6 +97,65 @@ describe("foodCarbs", () => {
     expect(foodCarbs("serving", 0, 2)).toBe(0);
     expect(foodCarbs("serving", 38, 0)).toBe(0);
     expect(foodCarbs("gram", NaN, 150)).toBe(0);
+  });
+});
+
+// ---- 3.2：份↔克自動補齊 ----
+
+describe("deriveCarbs", () => {
+  it("有每份克重時，從每份碳水推每100克", () => {
+    // 一份 50g、每份 30g 碳水 → 每100克 60g。
+    const r = deriveCarbs(50, 30, null);
+    expect(r.carbs_per_serving).toBe(30);
+    expect(r.carbs_per_100g).toBeCloseTo(60, 6);
+  });
+
+  it("有每份克重時，從每100克碳水推每份", () => {
+    // 一份 150g、每100克 26g 碳水 → 每份 39g。
+    const r = deriveCarbs(150, null, 26);
+    expect(r.carbs_per_100g).toBe(26);
+    expect(r.carbs_per_serving).toBeCloseTo(39, 6);
+  });
+
+  it("沒填克重、或兩種都有/都無時不亂猜", () => {
+    expect(deriveCarbs(null, 30, null)).toEqual({
+      carbs_per_serving: 30,
+      carbs_per_100g: null,
+    });
+    expect(deriveCarbs(50, 30, 60)).toEqual({
+      carbs_per_serving: 30,
+      carbs_per_100g: 60,
+    });
+    expect(deriveCarbs(50, null, null)).toEqual({
+      carbs_per_serving: null,
+      carbs_per_100g: null,
+    });
+  });
+});
+
+// ---- 餐別中心 ±1.5h 判定 ----
+
+describe("mealTypeForMinutes", () => {
+  // 預設：早 480(08:00)、午 750(12:30)、晚 1110(18:30)、±90 分。
+  it("落在某餐中心 ±半徑內歸該餐", () => {
+    expect(mealTypeForMinutes(8 * 60)).toBe("breakfast"); // 08:00
+    expect(mealTypeForMinutes(8 * 60 + 90)).toBe("breakfast"); // 09:30 邊界
+    expect(mealTypeForMinutes(12 * 60 + 30)).toBe("lunch"); // 12:30
+    expect(mealTypeForMinutes(18 * 60 + 30)).toBe("dinner"); // 18:30
+  });
+
+  it("都不在任一餐區間 → 點心", () => {
+    expect(mealTypeForMinutes(10 * 60 + 30)).toBe("snack"); // 10:30（早餐後、午餐前空檔）
+    expect(mealTypeForMinutes(15 * 60)).toBe("snack"); // 15:00
+    expect(mealTypeForMinutes(22 * 60)).toBe("snack"); // 22:00 宵夜
+  });
+
+  it("重疊時取最近的中心", () => {
+    // 自訂：早中心 600、午中心 720、半徑 90 → 660 距早 60、距午 60 平手取先到的早餐；
+    // 650 距早 50 < 距午 70 → 早餐。
+    const c = { breakfast_min: 600, lunch_min: 720, dinner_min: 1110, window_min: 90 };
+    expect(mealTypeForMinutes(650, c)).toBe("breakfast");
+    expect(mealTypeForMinutes(700, c)).toBe("lunch"); // 距午 20 < 距早 100
   });
 });
 
@@ -121,6 +203,7 @@ describe("estimateIcrIsf", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: insulin,
           glucose_before: before,
@@ -146,6 +229,7 @@ describe("estimateIcrIsf", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: carbs / 5, // ICR=5
           glucose_before: 100,
@@ -187,6 +271,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: insulin,
           glucose_before: 100,
@@ -200,6 +285,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `z${i}`,
+          eaten_at: dayIso(30 + i),
           total_carbs: carbs,
           insulin_units: 0,
           glucose_before: 100,
@@ -224,6 +310,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: carbs / 5,
           glucose_before: 100,
@@ -236,6 +323,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `z${i}`,
+          eaten_at: dayIso(5 + i),
           total_carbs: 50,
           insulin_units: 0,
           glucose_before: 100,
@@ -248,6 +336,233 @@ describe("沒打針的純碳水餐", () => {
     expect(r.method).toBe("median");
     expect(r.n).toBe(5); // 只算有打針的 5 筆
     expect(r.icr).toBeCloseTo(5, 6);
+  });
+});
+
+// ---- 階段 5.2：時段啞變數 ----
+
+describe("時段啞變數（5.2）", () => {
+  it("不同時段基礎血糖不同時，加啞變數仍能正確回推 ICR/ISF", () => {
+    // 真值 ICR=7、ISF=35（a=5）；早餐基線 0、晚餐基線 +40（晚餐整體偏高）。
+    const ICR = 7;
+    const ISF = 35;
+    const a = ISF / ICR;
+    const meals: Meal[] = [];
+    for (let i = 0; i < 40; i++) {
+      const carbs = 30 + (i % 7) * 10;
+      const insulin = carbs / ICR + ((i % 3) - 1) * 2; // 與碳水獨立變化
+      const isDinner = i >= 20;
+      const baseline = isDinner ? 40 : 0;
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          eaten_at: dayIso(i),
+          meal_type: isDinner ? "dinner" : "breakfast",
+          total_carbs: carbs,
+          insulin_units: insulin,
+          glucose_before: 100,
+          glucose_after: 100 + baseline + a * carbs - ISF * insulin,
+        }),
+      );
+    }
+    const r = estimateIcrIsf(meals, SETTINGS);
+    expect(r.method).toBe("regression");
+    expect(r.icr).toBeCloseTo(7, 3);
+    expect(r.isf).toBeCloseTo(35, 3);
+  });
+});
+
+// ---- 階段 5.3：獨立乾淨餐（>4 小時間隔）----
+
+describe("wellSpacedMeals（5.3）", () => {
+  it("同一天密集進食只留第一餐", () => {
+    const base = Date.UTC(2026, 0, 1, 8, 0, 0);
+    const meals = [0, 1, 2, 5].map((h, i) =>
+      makeMeal({
+        id: `m${i}`,
+        eaten_at: new Date(base + h * 3_600_000).toISOString(),
+      }),
+    );
+    // 08:00 留、09:00 排除、10:00 排除、13:00 留（距前一餐 3h... 不，距 10:00 為 3h → 排除）
+    // 修正：間隔 0/1h/1h/3h → 只有第一餐（08:00）獨立。
+    expect(wellSpacedMeals(meals).map((m) => m.id)).toEqual(["m0"]);
+  });
+
+  it("間隔都大於 4 小時則全留", () => {
+    const meals = [0, 1, 2].map((d) => makeMeal({ id: `d${d}`, eaten_at: dayIso(d) }));
+    expect(wellSpacedMeals(meals)).toHaveLength(3);
+  });
+});
+
+// ---- 階段 D：滾動窗口 ----
+
+describe("recentMeals（D）", () => {
+  it("只留最近 N 天的餐", () => {
+    const now = new Date(Date.UTC(2026, 0, 31, 8, 0, 0));
+    const meals = [
+      makeMeal({ id: "old", eaten_at: dayIso(0) }), // 1/1
+      makeMeal({ id: "mid", eaten_at: dayIso(20) }), // 1/21
+      makeMeal({ id: "new", eaten_at: dayIso(29) }), // 1/30
+    ];
+    const recent = recentMeals(meals, 15, now).map((m) => m.id);
+    expect(recent).toEqual(["mid", "new"]);
+  });
+});
+
+// ---- 階段 5.1：共線資料不當機 ----
+
+describe("嶺迴歸／共線穩定（5.1）", () => {
+  it("完全照碳水÷ICR 打針造成共線時，估算不當機、仍給得出結果", () => {
+    const ICR = 5;
+    const meals: Meal[] = [];
+    for (let i = 0; i < 35; i++) {
+      const carbs = 40 + (i % 5) * 10;
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          eaten_at: dayIso(i),
+          total_carbs: carbs,
+          insulin_units: carbs / ICR, // 與碳水完全共線
+          glucose_before: 100,
+          glucose_after: 150, // 餐後偏高（劑量不足）
+        }),
+      );
+    }
+    const r = estimateIcrIsf(meals, SETTINGS);
+    expect(r.method).not.toBe("insufficient");
+    expect(r.icr).not.toBeNull();
+    expect(Number.isFinite(r.icr as number)).toBe(true);
+  });
+});
+
+// ---- 模組四 4.1：IOB（指數衰減）----
+
+describe("iobFraction / insulinOnBoard", () => {
+  it("t=0 全在、超過 DIA 歸零、隨時間遞減", () => {
+    expect(iobFraction(0)).toBeCloseTo(1, 6);
+    expect(iobFraction(300)).toBe(0);
+    expect(iobFraction(360)).toBe(0);
+    const a = iobFraction(60);
+    const b = iobFraction(120);
+    const c = iobFraction(240);
+    expect(a).toBeLessThan(1);
+    expect(a).toBeGreaterThan(b);
+    expect(b).toBeGreaterThan(c);
+    expect(c).toBeGreaterThan(0);
+  });
+
+  it("DIA 不滿足 2×peak 時退回線性近似", () => {
+    // dia=200、peak=120 → 200 < 240 → 線性：t=100 剩 0.5
+    expect(iobFraction(100, 200, 120)).toBeCloseTo(0.5, 6);
+  });
+
+  it("只計 now 之前、DIA 內的劑量並加總殘留", () => {
+    const now = new Date("2026-06-01T12:00:00Z");
+    const meals = [
+      makeMeal({ id: "recent", eaten_at: "2026-06-01T11:00:00Z", insulin_units: 10 }), // 60 分前
+      makeMeal({ id: "old", eaten_at: "2026-06-01T06:00:00Z", insulin_units: 10 }), // 6h 前 > DIA
+      makeMeal({ id: "future", eaten_at: "2026-06-01T13:00:00Z", insulin_units: 10 }),
+    ];
+    const iob = insulinOnBoard(meals, now);
+    expect(iob).toBeCloseTo(10 * iobFraction(60), 6);
+    expect(iob).toBeGreaterThan(0);
+    expect(iob).toBeLessThan(10);
+  });
+});
+
+// ---- 模組一 1.1：建議劑量 ----
+
+describe("suggestDose", () => {
+  it("基本模式只用碳水 ÷ ICR", () => {
+    const r = suggestDose({ carbs: 50, icr: 5, advanced: false });
+    expect(r.dose).toBeCloseTo(10, 6);
+    expect(r.correction).toBe(0);
+    expect(r.iob).toBe(0);
+  });
+
+  it("進階：加校正；IOB 只有開啟自動扣除才扣", () => {
+    const base = {
+      carbs: 50,
+      icr: 5,
+      advanced: true as const,
+      isf: 40,
+      glucoseBefore: 160,
+      correctionTarget: 120,
+      iob: 2,
+    };
+    // 碳水 50/ICR5=10；校正 (160−120)/40=+1。未開自動扣 → 不扣 IOB → 11。
+    const noSub = suggestDose(base);
+    expect(noSub.base).toBeCloseTo(10, 6);
+    expect(noSub.correction).toBeCloseTo(1, 6);
+    expect(noSub.iob).toBe(0);
+    expect(noSub.dose).toBeCloseTo(11, 6);
+    // 開自動扣 → 扣 2 → 9。
+    const withSub = suggestDose({ ...base, subtractIob: true });
+    expect(withSub.iob).toBe(2);
+    expect(withSub.dose).toBeCloseTo(9, 6);
+  });
+
+  it("建議劑量不會低於 0", () => {
+    const r = suggestDose({
+      carbs: 10,
+      icr: 5,
+      advanced: true,
+      isf: 40,
+      glucoseBefore: 70,
+      correctionTarget: 120,
+      iob: 3,
+      subtractIob: true,
+    });
+    expect(r.dose).toBe(0);
+  });
+});
+
+// ---- 餐後讀數有效量測窗（B′）----
+
+describe("餐後讀數有效窗", () => {
+  it("postMealElapsedMin：依量測時間算經過分鐘；未記回 null", () => {
+    const m = makeMeal({
+      id: "a",
+      eaten_at: "2026-06-01T08:00:00Z",
+      glucose_after_at: "2026-06-01T10:00:00Z",
+    });
+    expect(postMealElapsedMin(m)).toBeCloseTo(120, 6);
+    expect(postMealElapsedMin(makeMeal({ id: "b" }))).toBeNull();
+  });
+
+  it("withinPostMealWindow：窗內納入、窗外排除、未記時間視為納入", () => {
+    const mk = (afterAt: string | null) =>
+      makeMeal({ id: "x", eaten_at: "2026-06-01T08:00:00Z", glucose_after_at: afterAt });
+    expect(withinPostMealWindow(mk("2026-06-01T10:00:00Z"))).toBe(true); // 120 分 ∈ 90–180
+    expect(withinPostMealWindow(mk("2026-06-01T13:00:00Z"))).toBe(false); // 300 分
+    expect(withinPostMealWindow(mk("2026-06-01T08:30:00Z"))).toBe(false); // 30 分
+    expect(withinPostMealWindow(mk(null))).toBe(true); // 未記 → 納入
+  });
+
+  it("estimateIcrIsf 排除窗外的讀數", () => {
+    const ICR = 7;
+    const ISF = 35;
+    const a = ISF / ICR;
+    const meals: Meal[] = [];
+    for (let i = 0; i < 35; i++) {
+      const carbs = 30 + (i % 7) * 10;
+      const insulin = carbs / ICR + ((i % 3) - 1) * 2;
+      const eaten = dayIso(i);
+      // 量測時間 = 用餐後 30 分（窗外）→ 應全被排除。
+      const at = new Date(new Date(eaten).getTime() + 30 * 60_000).toISOString();
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          eaten_at: eaten,
+          glucose_after_at: at,
+          total_carbs: carbs,
+          insulin_units: insulin,
+          glucose_before: 100,
+          glucose_after: 100 + a * carbs - ISF * insulin,
+        }),
+      );
+    }
+    expect(estimateIcrIsf(meals, SETTINGS).method).toBe("insufficient");
   });
 });
 
@@ -273,7 +588,7 @@ describe("icrConfidenceTrend", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
-          eaten_at: `2026-06-${String((i % 28) + 1).padStart(2, "0")}T08:00:00Z`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: insulin,
           glucose_before: 100,
@@ -305,6 +620,7 @@ describe("mealTypeIcrHints", () => {
       breakfasts.push(
         makeMeal({
           id: `b${i}`,
+          eaten_at: dayIso(i),
           meal_type: "breakfast",
           total_carbs: 80,
           insulin_units: 10, // 80/10 = 8
@@ -314,7 +630,7 @@ describe("mealTypeIcrHints", () => {
       );
     }
     // 午餐只有 1 筆 → 不足、不提示。
-    const lunch = makeMeal({ id: "l1", meal_type: "lunch" });
+    const lunch = makeMeal({ id: "l1", eaten_at: dayIso(20), meal_type: "lunch" });
 
     const hints = mealTypeIcrHints([...breakfasts, lunch], SETTINGS, 5);
     expect(hints).toHaveLength(1);
@@ -385,6 +701,66 @@ describe("aggregateFoodOutcomes", () => {
     expect(
       aggregateFoodOutcomes({ brand: "星巴克", name: "拿鐵" }, meals, mealFoods, SETTINGS).all.n,
     ).toBe(1);
+  });
+});
+
+// ---- 階段 2.3：劑量比例化（每份／每100克施打）----
+
+describe("劑量比例化", () => {
+  it("份制：單獨吃取每份施打中位數", () => {
+    const meals = [
+      makeMeal({ id: "s1", insulin_units: 8 }),
+      makeMeal({ id: "s2", insulin_units: 12 }),
+    ];
+    const mealFoods = [
+      makeMealFood({ meal_id: "s1", food_name: "白飯", carbs: 60, unit: "serving", amount: 2 }), // 4/份
+      makeMealFood({ meal_id: "s2", food_name: "白飯", carbs: 90, unit: "serving", amount: 3 }), // 4/份
+    ];
+    const agg = aggregateFoodOutcomes({ name: "白飯" }, meals, mealFoods, SETTINGS);
+    expect(agg.solo.dosePerServing).toBeCloseTo(4, 6);
+    expect(agg.solo.dosePer100g).toBeNull();
+  });
+
+  it("克制：單獨吃取每100克施打中位數", () => {
+    const meals = [makeMeal({ id: "g1", insulin_units: 6 })];
+    const mealFoods = [
+      makeMealFood({ meal_id: "g1", food_name: "地瓜", carbs: 39, unit: "gram", amount: 150 }), // 6/150*100=4
+    ];
+    const agg = aggregateFoodOutcomes({ name: "地瓜" }, meals, mealFoods, SETTINGS);
+    expect(agg.solo.dosePer100g).toBeCloseTo(4, 6);
+    expect(agg.solo.dosePerServing).toBeNull();
+  });
+});
+
+// ---- 階段 2.1：最近 N 次吃法 ----
+
+describe("recentFoodEntries", () => {
+  it("回傳最近 N 次（新到舊），含份量/劑量/餐前後", () => {
+    const meals = [
+      makeMeal({ id: "m1", eaten_at: dayIso(1), insulin_units: 5, glucose_before: 100, glucose_after: 140 }),
+      makeMeal({ id: "m2", eaten_at: dayIso(3), insulin_units: 8, glucose_before: 110, glucose_after: 160 }),
+      makeMeal({ id: "m3", eaten_at: dayIso(2), insulin_units: 6, glucose_before: 90, glucose_after: 130 }),
+    ];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_name: "白飯", carbs: 50, unit: "serving", amount: 1 }),
+      makeMealFood({ meal_id: "m2", food_name: "白飯", carbs: 100, unit: "serving", amount: 2 }),
+      makeMealFood({ meal_id: "m3", food_name: "白飯", carbs: 75, unit: "gram", amount: 150 }),
+    ];
+    const r = recentFoodEntries({ name: "白飯" }, meals, mealFoods);
+    expect(r).toHaveLength(3);
+    expect(r[0].eatenAt).toBe(dayIso(3)); // 最近在前
+    expect(r[0].amount).toBe(2);
+    expect(r[0].insulinUnits).toBe(8);
+    expect(recentFoodEntries({ name: "白飯" }, meals, mealFoods, 2)).toHaveLength(2);
+  });
+
+  it("完全比對：查「豆腐」不命中「板豆腐」", () => {
+    const meals = [makeMeal({ id: "m1" }), makeMeal({ id: "m2" })];
+    const mealFoods = [
+      makeMealFood({ meal_id: "m1", food_name: "豆腐" }),
+      makeMealFood({ meal_id: "m2", food_name: "板豆腐" }),
+    ];
+    expect(recentFoodEntries({ name: "豆腐" }, meals, mealFoods)).toHaveLength(1);
   });
 });
 

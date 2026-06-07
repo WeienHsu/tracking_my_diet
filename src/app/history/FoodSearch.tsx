@@ -117,7 +117,7 @@ function FoodGroupCard({ group }: { group: FoodSearchGroup }) {
       )}
 
       {agg.solo.n > 0 && (
-        <StatsLine label="單獨吃" tag="此食物劑量" stats={agg.solo} />
+        <StatsLine label="單獨吃" tag="此食物劑量" stats={agg.solo} showPerUnit />
       )}
       {agg.mixed.n > 0 && (
         <StatsLine
@@ -134,10 +134,12 @@ function StatsLine({
   label,
   tag,
   stats,
+  showPerUnit = false,
 }: {
   label: string;
   tag: string;
   stats: FoodOutcomeStats;
+  showPerUnit?: boolean;
 }) {
   return (
     <div className="mt-1.5 flex flex-col gap-0.5 text-xs text-zinc-600 dark:text-zinc-300">
@@ -150,6 +152,13 @@ function StatsLine({
         </span>
       </div>
       <div className="flex flex-wrap gap-x-3 text-zinc-500 dark:text-zinc-400">
+        {/* 2.3：單獨吃優先顯示每份／每100克施打比例 */}
+        {showPerUnit && stats.dosePerServing != null && (
+          <span>每份打 {round1(stats.dosePerServing)} 單位</span>
+        )}
+        {showPerUnit && stats.dosePer100g != null && (
+          <span>每100克打 {round1(stats.dosePer100g)} 單位</span>
+        )}
         {stats.typicalDose != null && (
           <span>
             常見{tag} {round1(stats.typicalDose)} 單位

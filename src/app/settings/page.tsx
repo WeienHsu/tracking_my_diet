@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getSettings } from "@/lib/repositories/settings";
-import { DEFAULT_MEAL_RANGE, type SettingsInput } from "@/lib/types";
+import { DEFAULT_MEAL_CENTERS, type SettingsInput } from "@/lib/types";
 import SettingsForm from "./SettingsForm";
 import ThemeToggle from "./ThemeToggle";
 
@@ -11,7 +11,18 @@ const DEFAULTS: SettingsInput = {
   icr: 5,
   target_glucose_low: 80,
   target_glucose_high: 180,
-  ...DEFAULT_MEAL_RANGE,
+  breakfast_center_min: DEFAULT_MEAL_CENTERS.breakfast_min,
+  lunch_center_min: DEFAULT_MEAL_CENTERS.lunch_min,
+  dinner_center_min: DEFAULT_MEAL_CENTERS.dinner_min,
+  meal_window_min: DEFAULT_MEAL_CENTERS.window_min,
+  isf: null,
+  correction_target: null,
+  advanced_dose: false,
+  insulin_dia_min: 300,
+  insulin_peak_min: 75,
+  iob_auto_subtract: false,
+  postmeal_window_lo_min: 90,
+  postmeal_window_hi_min: 180,
 };
 
 export default async function SettingsPage() {
@@ -28,10 +39,23 @@ export default async function SettingsPage() {
         icr: settings.icr,
         target_glucose_low: settings.target_glucose_low,
         target_glucose_high: settings.target_glucose_high,
-        breakfast_end_hour:
-          settings.breakfast_end_hour ?? DEFAULTS.breakfast_end_hour,
-        lunch_end_hour: settings.lunch_end_hour ?? DEFAULTS.lunch_end_hour,
-        dinner_end_hour: settings.dinner_end_hour ?? DEFAULTS.dinner_end_hour,
+        breakfast_center_min:
+          settings.breakfast_center_min ?? DEFAULTS.breakfast_center_min,
+        lunch_center_min:
+          settings.lunch_center_min ?? DEFAULTS.lunch_center_min,
+        dinner_center_min:
+          settings.dinner_center_min ?? DEFAULTS.dinner_center_min,
+        meal_window_min: settings.meal_window_min ?? DEFAULTS.meal_window_min,
+        isf: settings.isf ?? null,
+        correction_target: settings.correction_target ?? null,
+        advanced_dose: settings.advanced_dose ?? false,
+        insulin_dia_min: settings.insulin_dia_min ?? DEFAULTS.insulin_dia_min,
+        insulin_peak_min: settings.insulin_peak_min ?? DEFAULTS.insulin_peak_min,
+        iob_auto_subtract: settings.iob_auto_subtract ?? false,
+        postmeal_window_lo_min:
+          settings.postmeal_window_lo_min ?? DEFAULTS.postmeal_window_lo_min,
+        postmeal_window_hi_min:
+          settings.postmeal_window_hi_min ?? DEFAULTS.postmeal_window_hi_min,
       }
     : DEFAULTS;
 

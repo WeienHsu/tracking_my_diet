@@ -27,28 +27,43 @@ export const MEAL_CONTEXT_LABELS: Record<MealContext, string> = {
   alcohol: "喝酒",
 };
 
-export type MealRange = {
-  breakfast_end_hour: number;
-  lunch_end_hour: number;
-  dinner_end_hour: number;
+// 餐別判定：三餐中心時間（分鐘 of day）與半徑（±分鐘）。
+// 落在任一中心 ±window_min 內歸該餐（取最近的中心）；都不在則算點心。
+export type MealCenters = {
+  breakfast_min: number;
+  lunch_min: number;
+  dinner_min: number;
+  window_min: number;
 };
 
-// 預設餐別時段邊界（與 DB settings 欄位預設一致）。
-export const DEFAULT_MEAL_RANGE: MealRange = {
-  breakfast_end_hour: 11,
-  lunch_end_hour: 16,
-  dinner_end_hour: 21,
+// 預設：早 08:00、午 12:30、晚 18:30、±90 分（與 DB 欄位預設一致）。
+export const DEFAULT_MEAL_CENTERS: MealCenters = {
+  breakfast_min: 480,
+  lunch_min: 750,
+  dinner_min: 1110,
+  window_min: 90,
 };
 
-// 依小時數判定餐別（記錄頁預設、之後可由設定調整邊界）。
-export function mealTypeForHour(
-  hour: number,
-  range: MealRange = DEFAULT_MEAL_RANGE,
+// 依「當日分鐘數」判定餐別（記錄頁預設、可由設定調整中心與半徑）。
+export function mealTypeForMinutes(
+  minOfDay: number,
+  c: MealCenters = DEFAULT_MEAL_CENTERS,
 ): MealType {
-  if (hour < range.breakfast_end_hour) return "breakfast";
-  if (hour < range.lunch_end_hour) return "lunch";
-  if (hour < range.dinner_end_hour) return "dinner";
-  return "snack";
+  const candidates: [MealType, number][] = [
+    ["breakfast", c.breakfast_min],
+    ["lunch", c.lunch_min],
+    ["dinner", c.dinner_min],
+  ];
+  let best: MealType | null = null;
+  let bestDist = Infinity;
+  for (const [type, center] of candidates) {
+    const d = Math.abs(minOfDay - center);
+    if (d <= c.window_min && d < bestDist) {
+      best = type;
+      bestDist = d;
+    }
+  }
+  return best ?? "snack";
 }
 
 // 食物計量方式：份制（每份碳水×份數）或克制（每100克碳水×克數）。
@@ -85,10 +100,27 @@ export type Food = {
   name: string; // 食物名稱
   carbs_per_serving: number | null; // 每份碳水克數（份制食物）
   carbs_per_100g: number | null; // 每 100 克碳水（克制食物）
+  serving_grams: number | null; // 每份克重（選填，用來在份↔克間換算）
   serving_desc: string | null; // 份量描述（例：一個便當）
   note: string | null; // 其他備註
   created_at: string;
 };
+
+// 3.2：有「每份克重」時，從已知的一種碳水推算另一種（份↔克自動補齊）。
+// 兩種都有或都無、或沒填克重時，原樣回傳、不亂猜。
+export function deriveCarbs(
+  servingGrams: number | null | undefined,
+  carbsPerServing: number | null | undefined,
+  carbsPer100g: number | null | undefined,
+): { carbs_per_serving: number | null; carbs_per_100g: number | null } {
+  let ps = carbsPerServing ?? null;
+  let pg = carbsPer100g ?? null;
+  if (servingGrams != null && servingGrams > 0) {
+    if (ps != null && pg == null) pg = (ps / servingGrams) * 100;
+    else if (pg != null && ps == null) ps = (pg * servingGrams) / 100;
+  }
+  return { carbs_per_serving: ps, carbs_per_100g: pg };
+}
 
 export type Meal = {
   id: string;
@@ -98,7 +130,8 @@ export type Meal = {
   glucose_before: number | null; // 餐前血糖 mg/dL
   total_carbs: number; // 碳水總量 g
   insulin_units: number; // 實際施打單位
-  glucose_after: number | null; // 餐後兩小時血糖 mg/dL
+  glucose_after: number | null; // 餐後血糖 mg/dL（意圖為餐後約 2 小時）
+  glucose_after_at: string | null; // 餐後血糖的實際量測時間（ISO；用來判定是否落在有效窗）
   exercise: Exercise; // 運動強度（影響胰島素敏感度）
   context: MealContext[]; // 狀態標籤（生病/壓力/喝酒）
   note: string | null;
@@ -132,10 +165,22 @@ export type Settings = {
   icr: number; // g 碳水 / 1 單位
   target_glucose_low: number;
   target_glucose_high: number;
-  // 餐別自動判定的時段邊界（小時，0–23）。記錄頁據此預設餐別。
-  breakfast_end_hour: number; // 此時前算早餐
-  lunch_end_hour: number; // 此時前算午餐
-  dinner_end_hour: number; // 此時前算晚餐，之後算點心
+  // 餐別自動判定：三餐中心時間（分鐘 of day）與半徑（±分鐘）。
+  breakfast_center_min: number;
+  lunch_center_min: number;
+  dinner_center_min: number;
+  meal_window_min: number;
+  // 進階建議劑量（模組一/四）。
+  isf: number | null; // 胰島素敏感因子（每 1 單位降多少 mg/dL）
+  correction_target: number | null; // 校正目標血糖
+  advanced_dose: boolean; // 進階建議劑量開關（含校正劑量與 IOB 扣除）
+  // IOB（活性胰島素）參數：指數曲線由 DIA 與 peak 決定（依使用的胰島素）。
+  insulin_dia_min: number; // 作用總時間（分鐘）
+  insulin_peak_min: number; // 作用高峰時間（分鐘）
+  iob_auto_subtract: boolean; // 是否自動從建議劑量扣除 IOB（預設關）
+  // 餐後讀數「有效量測窗」（分鐘）：迴歸只採用落在此窗的讀數。預設 90–180（1.5–3h）。
+  postmeal_window_lo_min: number;
+  postmeal_window_hi_min: number;
   updated_at: string;
 };
 
@@ -146,6 +191,7 @@ export type FoodInput = {
   name: string;
   carbs_per_serving?: number | null;
   carbs_per_100g?: number | null;
+  serving_grams?: number | null;
   serving_desc?: string | null;
   note?: string | null;
 };
@@ -157,6 +203,7 @@ export type MealInput = {
   total_carbs: number;
   insulin_units: number;
   glucose_after?: number | null;
+  glucose_after_at?: string | null;
   exercise?: Exercise;
   context?: MealContext[];
   note?: string | null;
@@ -181,7 +228,16 @@ export type SettingsInput = {
   icr: number;
   target_glucose_low: number;
   target_glucose_high: number;
-  breakfast_end_hour: number;
-  lunch_end_hour: number;
-  dinner_end_hour: number;
+  breakfast_center_min: number;
+  lunch_center_min: number;
+  dinner_center_min: number;
+  meal_window_min: number;
+  isf: number | null;
+  correction_target: number | null;
+  advanced_dose: boolean;
+  insulin_dia_min: number;
+  insulin_peak_min: number;
+  iob_auto_subtract: boolean;
+  postmeal_window_lo_min: number;
+  postmeal_window_hi_min: number;
 };

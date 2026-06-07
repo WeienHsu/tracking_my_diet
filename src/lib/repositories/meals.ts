@@ -49,25 +49,19 @@ export async function getMeal(
 }
 
 // 建立一餐，並一併寫入其食物明細。
+// 透過 create_meal_with_foods RPC（migration 0007）做原子寫入，避免第二段失敗留下孤兒 meal。
+// 回傳新建 meal 的 id。
 export async function createMeal(
   supabase: SupabaseClient,
   meal: MealInput,
   foods: MealFoodInput[] = [],
-): Promise<Meal> {
-  const { data: mealRow, error } = await supabase
-    .from("meals")
-    .insert(meal)
-    .select()
-    .single();
+): Promise<string> {
+  const { data, error } = await supabase.rpc("create_meal_with_foods", {
+    p_meal: meal,
+    p_foods: foods,
+  });
   if (error) throw error;
-
-  if (foods.length > 0) {
-    const rows = foods.map((f) => ({ ...f, meal_id: mealRow.id }));
-    const { error: mfError } = await supabase.from("meal_foods").insert(rows);
-    if (mfError) throw mfError;
-  }
-
-  return mealRow as Meal;
+  return data as string;
 }
 
 export async function updateMeal(
