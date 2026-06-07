@@ -157,6 +157,10 @@ export type Settings = {
   isf: number | null; // 胰島素敏感因子（每 1 單位降多少 mg/dL）
   correction_target: number | null; // 校正目標血糖
   advanced_dose: boolean; // 進階建議劑量開關（含校正劑量與 IOB 扣除）
+  // IOB（活性胰島素）參數：指數曲線由 DIA 與 peak 決定（依使用的胰島素）。
+  insulin_dia_min: number; // 作用總時間（分鐘）
+  insulin_peak_min: number; // 作用高峰時間（分鐘）
+  iob_auto_subtract: boolean; // 是否自動從建議劑量扣除 IOB（預設關）
   updated_at: string;
 };
 
@@ -209,4 +213,7 @@ export type SettingsInput = {
   isf: number | null;
   correction_target: number | null;
   advanced_dose: boolean;
+  insulin_dia_min: number;
+  insulin_peak_min: number;
+  iob_auto_subtract: boolean;
 };

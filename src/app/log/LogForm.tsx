@@ -23,7 +23,6 @@ import {
   recentFoodEntries,
   insulinOnBoard,
   suggestDose,
-  IOB_DURATION_HOURS,
   type FoodOutcomeStats,
   type FoodRecentEntry,
 } from "@/lib/analysis";
@@ -105,6 +104,7 @@ export default function LogForm({
   isf,
   correctionTarget,
   advancedDose,
+  iobParams,
   icrEstimate,
 }: {
   foods: FoodOption[];
@@ -116,6 +116,7 @@ export default function LogForm({
   isf: number | null;
   correctionTarget: number | null;
   advancedDose: boolean;
+  iobParams: { diaMin: number; peakMin: number; autoSubtract: boolean };
   icrEstimate: number | null;
 }) {
   const router = useRouter();
@@ -150,10 +151,14 @@ export default function LogForm({
 
   const glucoseBeforeNum = glucoseBefore === "" ? null : Number(glucoseBefore);
 
-  // 4.1：以「這餐時間」為基準算活性胰島素（只看 4 小時內的既往劑量）。
+  // 4.1：以「這餐時間」為基準算活性胰島素（指數曲線，依設定的 DIA/peak）。
   const iob = useMemo(
-    () => insulinOnBoard(meals, new Date(eatenAt)),
-    [meals, eatenAt],
+    () =>
+      insulinOnBoard(meals, new Date(eatenAt), {
+        diaMin: iobParams.diaMin,
+        peakMin: iobParams.peakMin,
+      }),
+    [meals, eatenAt, iobParams.diaMin, iobParams.peakMin],
   );
 
   // 1.2：可選用反推 ICR。
@@ -173,8 +178,9 @@ export default function LogForm({
         glucoseBefore: glucoseBeforeNum,
         correctionTarget,
         iob,
+        subtractIob: iobParams.autoSubtract,
       }),
-    [totalCarbs, effectiveIcr, advancedDose, isf, glucoseBeforeNum, correctionTarget, iob],
+    [totalCarbs, effectiveIcr, advancedDose, isf, glucoseBeforeNum, correctionTarget, iob, iobParams.autoSubtract],
   );
   const suggestedDose = suggestion.dose;
 
@@ -581,10 +587,11 @@ export default function LogForm({
         {/* 4.1：疊藥警示 */}
         {iob > 0 && (
           <p className="mt-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300">
-            ⚠️ 疊藥提醒：{IOB_DURATION_HOURS} 小時內還有約 {round1(iob)} 單位活性胰島素未代謝完。
-            {advancedDose
+            ⚠️ 疊藥提醒：還有約 {round1(iob)} 單位活性胰島素未代謝完（作用時間約{" "}
+            {round1(iobParams.diaMin / 60)} 小時）。
+            {advancedDose && iobParams.autoSubtract
               ? "已從建議中扣除，請留意低血糖風險。"
-              : "目前未自動扣除（進階建議劑量關閉），請自行斟酌。"}
+              : "目前未自動扣除，請自行斟酌。"}
           </p>
         )}
 

@@ -15,6 +15,9 @@ const DEFAULTS: SettingsInput = {
   isf: null,
   correction_target: null,
   advanced_dose: false,
+  insulin_dia_min: 300,
+  insulin_peak_min: 75,
+  iob_auto_subtract: false,
 };
 
 export default async function SettingsPage() {
@@ -38,6 +41,9 @@ export default async function SettingsPage() {
         isf: settings.isf ?? null,
         correction_target: settings.correction_target ?? null,
         advanced_dose: settings.advanced_dose ?? false,
+        insulin_dia_min: settings.insulin_dia_min ?? DEFAULTS.insulin_dia_min,
+        insulin_peak_min: settings.insulin_peak_min ?? DEFAULTS.insulin_peak_min,
+        iob_auto_subtract: settings.iob_auto_subtract ?? false,
       }
     : DEFAULTS;
 

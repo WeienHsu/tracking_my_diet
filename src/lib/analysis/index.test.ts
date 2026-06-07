@@ -15,6 +15,7 @@ import {
   foodResiduals,
   foodImpactAdaptive,
   insulinOnBoard,
+  iobFraction,
   suggestDose,
 } from "./index";
 
@@ -67,6 +68,9 @@ const SETTINGS: Settings = {
   isf: null,
   correction_target: null,
   advanced_dose: false,
+  insulin_dia_min: 300,
+  insulin_peak_min: 75,
+  iob_auto_subtract: false,
   updated_at: "2026-06-01T00:00:00Z",
 };
 
@@ -399,24 +403,38 @@ describe("嶺迴歸／共線穩定（5.1）", () => {
   });
 });
 
-// ---- 模組四 4.1：IOB ----
+// ---- 模組四 4.1：IOB（指數衰減）----
 
-describe("insulinOnBoard", () => {
-  it("線性衰減：2 小時前打 8 單位（4h 歸零）→ 剩 4", () => {
-    const now = new Date("2026-06-01T12:00:00Z");
-    const meals = [
-      makeMeal({ id: "a", eaten_at: "2026-06-01T10:00:00Z", insulin_units: 8 }),
-    ];
-    expect(insulinOnBoard(meals, now)).toBeCloseTo(4, 6);
+describe("iobFraction / insulinOnBoard", () => {
+  it("t=0 全在、超過 DIA 歸零、隨時間遞減", () => {
+    expect(iobFraction(0)).toBeCloseTo(1, 6);
+    expect(iobFraction(300)).toBe(0);
+    expect(iobFraction(360)).toBe(0);
+    const a = iobFraction(60);
+    const b = iobFraction(120);
+    const c = iobFraction(240);
+    expect(a).toBeLessThan(1);
+    expect(a).toBeGreaterThan(b);
+    expect(b).toBeGreaterThan(c);
+    expect(c).toBeGreaterThan(0);
   });
 
-  it("超過作用時間或未來的劑量不計", () => {
+  it("DIA 不滿足 2×peak 時退回線性近似", () => {
+    // dia=200、peak=120 → 200 < 240 → 線性：t=100 剩 0.5
+    expect(iobFraction(100, 200, 120)).toBeCloseTo(0.5, 6);
+  });
+
+  it("只計 now 之前、DIA 內的劑量並加總殘留", () => {
     const now = new Date("2026-06-01T12:00:00Z");
     const meals = [
-      makeMeal({ id: "old", eaten_at: "2026-06-01T06:00:00Z", insulin_units: 10 }), // 6h 前
+      makeMeal({ id: "recent", eaten_at: "2026-06-01T11:00:00Z", insulin_units: 10 }), // 60 分前
+      makeMeal({ id: "old", eaten_at: "2026-06-01T06:00:00Z", insulin_units: 10 }), // 6h 前 > DIA
       makeMeal({ id: "future", eaten_at: "2026-06-01T13:00:00Z", insulin_units: 10 }),
     ];
-    expect(insulinOnBoard(meals, now)).toBe(0);
+    const iob = insulinOnBoard(meals, now);
+    expect(iob).toBeCloseTo(10 * iobFraction(60), 6);
+    expect(iob).toBeGreaterThan(0);
+    expect(iob).toBeLessThan(10);
   });
 });
 
@@ -430,21 +448,26 @@ describe("suggestDose", () => {
     expect(r.iob).toBe(0);
   });
 
-  it("進階：加校正劑量並扣 IOB", () => {
-    // 碳水 50/ICR5=10；餐前 160、目標 120、ISF 40 → 校正 +1；IOB 2 → 11
-    const r = suggestDose({
+  it("進階：加校正；IOB 只有開啟自動扣除才扣", () => {
+    const base = {
       carbs: 50,
       icr: 5,
-      advanced: true,
+      advanced: true as const,
       isf: 40,
       glucoseBefore: 160,
       correctionTarget: 120,
       iob: 2,
-    });
-    expect(r.base).toBeCloseTo(10, 6);
-    expect(r.correction).toBeCloseTo(1, 6);
-    expect(r.iob).toBe(2);
-    expect(r.dose).toBeCloseTo(9, 6);
+    };
+    // 碳水 50/ICR5=10；校正 (160−120)/40=+1。未開自動扣 → 不扣 IOB → 11。
+    const noSub = suggestDose(base);
+    expect(noSub.base).toBeCloseTo(10, 6);
+    expect(noSub.correction).toBeCloseTo(1, 6);
+    expect(noSub.iob).toBe(0);
+    expect(noSub.dose).toBeCloseTo(11, 6);
+    // 開自動扣 → 扣 2 → 9。
+    const withSub = suggestDose({ ...base, subtractIob: true });
+    expect(withSub.iob).toBe(2);
+    expect(withSub.dose).toBeCloseTo(9, 6);
   });
 
   it("建議劑量不會低於 0", () => {
@@ -456,6 +479,7 @@ describe("suggestDose", () => {
       glucoseBefore: 70,
       correctionTarget: 120,
       iob: 3,
+      subtractIob: true,
     });
     expect(r.dose).toBe(0);
   });

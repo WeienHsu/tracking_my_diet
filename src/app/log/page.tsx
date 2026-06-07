@@ -49,6 +49,11 @@ export default async function LogPage() {
   const isf = settings?.isf ?? null;
   const correctionTarget = settings?.correction_target ?? null;
   const advancedDose = settings?.advanced_dose ?? false;
+  const iobParams = {
+    diaMin: settings?.insulin_dia_min ?? 300,
+    peakMin: settings?.insulin_peak_min ?? 75,
+    autoSubtract: settings?.iob_auto_subtract ?? false,
+  };
 
   // 1.2：反推 ICR（近 N 天），記錄頁可一鍵切換採用。
   const estSettings = (settings ?? {
@@ -87,6 +92,7 @@ export default async function LogPage() {
         isf={isf}
         correctionTarget={correctionTarget}
         advancedDose={advancedDose}
+        iobParams={iobParams}
         icrEstimate={icrEstimate}
       />
     </main>

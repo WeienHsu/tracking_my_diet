@@ -1021,24 +1021,60 @@ export function foodImpactAdaptive(
 
 // ---- 模組四 4.1：活性胰島素（IOB）----
 //
-// 筆針 MDI 無幫浦資料，用簡化的線性衰減估算：一劑在 durationHours 小時內線性歸零。
+// 用指數衰減曲線（Loop / OpenAPS 的標準做法），由 DIA（作用總時間）與 peak（高峰時間）
+// 兩參數決定，依使用的胰島素設定。比直線真實：先慢、中段快、尾巴拖長。
 // 僅供「防疊藥」觀察提示，非藥物動力學精算。
 
-export const IOB_DURATION_HOURS = 4;
+// 預設為速效類似物（peak 75 分、DIA 300 分 = 5 小時）。
+export const DEFAULT_IOB_DIA_MIN = 300;
+export const DEFAULT_IOB_PEAK_MIN = 75;
 
-// 計算到 now 為止、仍殘留的活性胰島素（只看 now 之前 durationHours 內的劑量）。
+// 打針後經過 tMin 分鐘，仍殘留的比例（0~1）。指數雙參數模型。
+// 需 DIA > 2×peak 才有效；否則退回線性近似避免數學爆掉。
+export function iobFraction(
+  tMin: number,
+  diaMin: number = DEFAULT_IOB_DIA_MIN,
+  peakMin: number = DEFAULT_IOB_PEAK_MIN,
+): number {
+  if (tMin <= 0) return 1;
+  if (tMin >= diaMin) return 0;
+
+  const td = diaMin;
+  const tp = peakMin;
+  if (!(td > 2 * tp)) {
+    // 參數不合指數模型 → 線性備援。
+    return 1 - tMin / td;
+  }
+
+  const tau = (tp * (1 - tp / td)) / (1 - (2 * tp) / td);
+  const a = (2 * tau) / td;
+  const S = 1 / (1 - a + (1 + a) * Math.exp(-td / tau));
+  const iob =
+    1 -
+    S *
+      (1 - a) *
+      (((tMin * tMin) / (tau * td * (1 - a)) - tMin / tau - 1) *
+        Math.exp(-tMin / tau) +
+        1);
+  // 數值上夾在 0~1。
+  return Math.min(1, Math.max(0, iob));
+}
+
+// 計算到 now 為止、仍殘留的活性胰島素（加總 now 之前每筆劑量的殘留）。
 export function insulinOnBoard(
   meals: Meal[],
   now: Date,
-  durationHours: number = IOB_DURATION_HOURS,
+  opts: { diaMin?: number; peakMin?: number } = {},
 ): number {
+  const diaMin = opts.diaMin ?? DEFAULT_IOB_DIA_MIN;
+  const peakMin = opts.peakMin ?? DEFAULT_IOB_PEAK_MIN;
   const t = now.getTime();
   let iob = 0;
   for (const m of meals) {
     if (m.insulin_units <= 0) continue;
-    const elapsed = (t - new Date(m.eaten_at).getTime()) / 3_600_000;
-    if (elapsed <= 0 || elapsed >= durationHours) continue;
-    iob += m.insulin_units * (1 - elapsed / durationHours);
+    const elapsedMin = (t - new Date(m.eaten_at).getTime()) / 60_000;
+    if (elapsedMin <= 0 || elapsedMin >= diaMin) continue;
+    iob += m.insulin_units * iobFraction(elapsedMin, diaMin, peakMin);
   }
   return iob;
 }
@@ -1062,6 +1098,7 @@ export function suggestDose(params: {
   glucoseBefore?: number | null;
   correctionTarget?: number | null;
   iob?: number;
+  subtractIob?: boolean; // 是否真的從建議扣 IOB（預設關，僅顯示提醒）
 }): DoseSuggestion {
   const { carbs, icr, advanced } = params;
   const base = icr > 0 ? carbs / icr : 0;
@@ -1077,7 +1114,8 @@ export function suggestDose(params: {
     correction = (params.glucoseBefore - params.correctionTarget) / params.isf;
   }
 
-  const iob = advanced ? params.iob ?? 0 : 0;
+  // IOB 只有在進階模式且使用者開啟「自動扣除」時才從建議扣。
+  const iob = advanced && params.subtractIob ? params.iob ?? 0 : 0;
   const dose = Math.max(0, base + correction - iob);
   return { dose, base, correction, iob, icrUsed: icr, advanced };
 }

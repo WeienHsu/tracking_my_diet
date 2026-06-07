@@ -20,6 +20,11 @@ const SettingsSchema = z.object({
   isf: z.number().positive("ISF 必須大於 0").nullable(),
   correction_target: z.number().positive().nullable(),
   advanced_dose: z.boolean(),
+  insulin_dia_min: z.number().int().positive(),
+  insulin_peak_min: z.number().int().positive(),
+  iob_auto_subtract: z.boolean(),
+}).refine((v) => v.insulin_dia_min > v.insulin_peak_min, {
+  message: "作用時間需大於高峰時間",
 });
 
 export async function saveSettingsAction(

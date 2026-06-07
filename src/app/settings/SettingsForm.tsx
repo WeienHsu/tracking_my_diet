@@ -8,6 +8,14 @@ import { saveSettingsAction } from "./actions";
 const inputClass =
   "h-12 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-base outline-none focus:border-zinc-500";
 
+// 常見胰島素的 IOB 指數曲線參數（peak 高峰、dia 作用時間，分鐘）。
+// 為通用估計值，務必依實際用藥與醫師確認。
+const INSULIN_PRESETS: { label: string; peak: number; dia: number }[] = [
+  { label: "速效類似物（NovoRapid／Humalog／Apidra）", peak: 75, dia: 300 },
+  { label: "超速效（Fiasp／Lyumjev）", peak: 55, dia: 300 },
+  { label: "短效人類（Regular／R）", peak: 150, dia: 360 },
+];
+
 export default function SettingsForm({ initial }: { initial: SettingsInput }) {
   const router = useRouter();
 
@@ -24,6 +32,12 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
   const [isf, setIsf] = useState(initial.isf != null ? String(initial.isf) : "");
   const [correctionTarget, setCorrectionTarget] = useState(
     initial.correction_target != null ? String(initial.correction_target) : "",
+  );
+  // IOB 參數（指數曲線，依胰島素）。
+  const [diaMin, setDiaMin] = useState(String(initial.insulin_dia_min));
+  const [peakMin, setPeakMin] = useState(String(initial.insulin_peak_min));
+  const [iobAutoSubtract, setIobAutoSubtract] = useState(
+    initial.iob_auto_subtract,
   );
 
   const [saving, setSaving] = useState(false);
@@ -61,6 +75,9 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
         correction_target:
           correctionTarget.trim() === "" ? null : Number(correctionTarget),
         advanced_dose: advancedDose,
+        insulin_dia_min: Number(diaMin),
+        insulin_peak_min: Number(peakMin),
+        iob_auto_subtract: iobAutoSubtract,
       });
       if (!res.ok) {
         setMessage({ type: "err", text: res.error });
@@ -177,6 +194,70 @@ export default function SettingsForm({ initial }: { initial: SettingsInput }) {
                 className={inputClass}
               />
             </Field>
+
+            {/* 活性胰島素（IOB）參數：指數曲線，依胰島素 */}
+            <Field label="胰島素（帶入 IOB 曲線預設，可再微調）">
+              <select
+                value={(() => {
+                  const i = INSULIN_PRESETS.findIndex(
+                    (p) => String(p.dia) === diaMin && String(p.peak) === peakMin,
+                  );
+                  return i >= 0 ? String(i) : "custom";
+                })()}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "custom") return;
+                  const p = INSULIN_PRESETS[Number(v)];
+                  setDiaMin(String(p.dia));
+                  setPeakMin(String(p.peak));
+                }}
+                className={`${inputClass} bg-white dark:bg-zinc-900`}
+              >
+                {INSULIN_PRESETS.map((p, i) => (
+                  <option key={i} value={i}>
+                    {p.label}
+                  </option>
+                ))}
+                <option value="custom">自訂</option>
+              </select>
+            </Field>
+            <div className="flex gap-2">
+              <Field label="作用時間 DIA（分鐘）">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={diaMin}
+                  onChange={(e) => setDiaMin(e.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="高峰 peak（分鐘）">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={peakMin}
+                  onChange={(e) => setPeakMin(e.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+            </div>
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={iobAutoSubtract}
+                onChange={(e) => setIobAutoSubtract(e.target.checked)}
+                className="mt-1 h-5 w-5 shrink-0"
+              />
+              <span className="text-sm">
+                <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                  自動從建議劑量扣除活性胰島素（IOB）
+                </span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                  預設關閉（只顯示疊藥提醒）。開啟後建議會直接扣掉殘留胰島素，請特別留意低血糖風險。
+                </span>
+              </span>
+            </label>
+
             <p className="text-xs leading-5 text-amber-700 dark:text-amber-400">
               ⚠️ 進階建議會算出更接近「可直接施打」的數字，但<strong>仍僅供參考、不可取代專業醫療判斷</strong>。
               ISF／目標血糖請與你的醫師／衛教師確認；校正與疊藥估算為簡化模型。

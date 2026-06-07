@@ -32,6 +32,9 @@ const DEFAULT_SETTINGS: Settings = {
   isf: null,
   correction_target: null,
   advanced_dose: false,
+  insulin_dia_min: 300,
+  insulin_peak_min: 75,
+  iob_auto_subtract: false,
   updated_at: "",
 };
 
