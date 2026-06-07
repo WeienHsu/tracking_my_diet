@@ -7,14 +7,15 @@ import { foodLabel, MEAL_TYPE_LABELS } from "@/lib/types";
 import HomeCharts from "./HomeCharts";
 import PendingGlucoseCard, { type PendingMeal } from "./PendingGlucoseCard";
 
-// 4.2：找出 1.5–3 小時前、尚未填餐後血糖的餐（抽成函式，避免在元件本體呼叫 Date）。
-function computePending(meals: MealWithFoods[]): PendingMeal[] {
+// 4.2：找出「近 4 小時內、尚未填餐後血糖」的候選餐；實際是否落在 1.5–3h 窗由前端即時判定，
+// 這樣頁面開著時也會隨時間自動跳出/收起（不必重新整理）。抽成函式避免在元件本體呼叫 Date。
+function computeCandidates(meals: MealWithFoods[]): PendingMeal[] {
   const now = Date.now();
   return meals
     .filter((m) => m.glucose_after == null)
     .filter((m) => {
       const h = (now - new Date(m.eaten_at).getTime()) / 3_600_000;
-      return h >= 1.5 && h <= 3;
+      return h >= 0 && h <= 4; // 多給上下緩衝，讓前端能涵蓋整個 1.5–3h 窗
     })
     .map((m) => ({
       id: m.id,
@@ -53,8 +54,8 @@ export default async function Home() {
 
   const trend = buildTrend(meals);
 
-  // 4.2：1.5–3 小時前、尚未填餐後血糖的餐，列在首頁可一鍵補填。
-  const pending = computePending(meals);
+  // 4.2：近 4 小時內未填餐後血糖的候選；前端依當下時間即時篩 1.5–3h。
+  const candidates = computeCandidates(meals);
 
   // A1C 由舊到新；measured_at 為 YYYY-MM-DD。
   const a1c = [...a1cRecords].reverse().map((r) => ({
@@ -83,8 +84,8 @@ export default async function Home() {
         </form>
       </div>
 
-      {/* 4.2：待補填餐後血糖 */}
-      <PendingGlucoseCard pending={pending} />
+      {/* 4.2：待補填餐後血糖（前端即時依 1.5–3h 視窗顯示）*/}
+      <PendingGlucoseCard candidates={candidates} />
 
       {/* 導覽 */}
       <div className="grid grid-cols-2 gap-3">
