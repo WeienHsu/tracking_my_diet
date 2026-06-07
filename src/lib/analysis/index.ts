@@ -66,6 +66,16 @@ export const MIN_MEALS_FOR_ESTIMATE = 3;
 // 僅當作先驗，迴歸法可用後即由實際估計取代。
 export const ASSUMED_ISF_PER_ICR = 3.6;
 
+// 階段 5.3：餐次間隔須大於此小時數才算「獨立乾淨餐」，排除連續進食的雜訊。
+export const MIN_MEAL_GAP_HOURS = 4;
+// 階段 5.2：每多一個時段啞變數，迴歸門檻就多要求這麼多筆，避免參數過多過擬合。
+export const DUMMY_MEALS_PER_PARAM = 5;
+// 階段 5.1：嶺迴歸（L2）的正則化強度係數（相對於特徵尺度）。
+// 只在 OLS 因共線性奇異「當機」時才啟用，故值小、不影響可正常識別的資料。
+const RIDGE_ALPHA = 1e-3;
+// 階段 D：滾動窗口的預設天數（呼叫端可覆寫；引擎本身預設 null＝用全歷史）。
+export const DEFAULT_WINDOW_DAYS = 90;
+
 // ---- 血糖趨勢（時間由舊到新）----
 
 export function buildTrend(meals: Meal[]): TrendPoint[] {
@@ -254,6 +264,36 @@ function usableForRegression(m: Meal): boolean {
   );
 }
 
+// ---- 階段 5.3：獨立乾淨餐（與「前一次任何進食」間隔 > minGapHours）----
+// 以全部餐次（含不正常餐）為進食事件來判定間隔；連續進食的後一餐視為受干擾，排除。
+export function wellSpacedMeals(
+  meals: Meal[],
+  minGapHours: number = MIN_MEAL_GAP_HOURS,
+): Meal[] {
+  const sorted = [...meals].sort(
+    (a, b) => new Date(a.eaten_at).getTime() - new Date(b.eaten_at).getTime(),
+  );
+  const out: Meal[] = [];
+  let prev: number | null = null;
+  for (const m of sorted) {
+    const t = new Date(m.eaten_at).getTime();
+    if (prev == null || (t - prev) / 3_600_000 > minGapHours) out.push(m);
+    prev = t; // 每一餐都是進食事件，無論是否納入。
+  }
+  return out;
+}
+
+// ---- 階段 D：滾動窗口（只取最近 windowDays 天的餐，貼合當下體質）----
+// 泛型保留輸入型別（如 MealWithFoods 仍帶 meal_foods）。
+export function recentMeals<T extends Meal>(
+  meals: T[],
+  windowDays: number,
+  now: Date = new Date(),
+): T[] {
+  const cutoff = now.getTime() - windowDays * 86_400_000;
+  return meals.filter((m) => new Date(m.eaten_at).getTime() >= cutoff);
+}
+
 // ---- 階段 1-B：自適應 ICR/ISF 估算 ----
 
 // 餐的物理模型：Δ血糖 ≈ a·碳水 − b·胰島素 + c，其中 a=ISF/ICR、b=ISF。
@@ -276,13 +316,23 @@ export type IcrIsfEstimate = {
 export function estimateIcrIsf(
   meals: Meal[],
   settings: Settings,
-  opts: { minMealsForRegression?: number } = {},
+  opts: {
+    minMealsForRegression?: number;
+    minGapHours?: number; // 階段 5.3：獨立乾淨餐的最小間隔（小時）
+    windowDays?: number | null; // 階段 D：只取最近 N 天；null＝全歷史
+    now?: Date;
+  } = {},
 ): IcrIsfEstimate {
   const minForReg = opts.minMealsForRegression ?? MIN_MEALS_FOR_REGRESSION;
+  const minGapHours = opts.minGapHours ?? MIN_MEAL_GAP_HOURS;
+  const windowDays = opts.windowDays ?? null;
   const configuredIcr = settings.icr;
 
-  // 只用「正常的餐」估算（排除運動/生病/壓力/喝酒）。
-  const clean = cleanMeals(meals);
+  // 階段 D：先套滾動窗口（若有指定）。
+  const pool = windowDays != null ? recentMeals(meals, windowDays, opts.now) : meals;
+  // 階段 5.3：以全部進食事件判定「獨立乾淨餐」，再與正常餐取交集。
+  const spacedIds = new Set(wellSpacedMeals(pool, minGapHours).map((m) => m.id));
+  const clean = cleanMeals(pool).filter((m) => spacedIds.has(m.id));
   // 迴歸法用：含沒打針（胰島素=0）的純碳水餐。
   const regUsable = clean.filter(usableForRegression);
   // 中位數法用：須劑量>0（要算 碳水/劑量）。
@@ -304,12 +354,16 @@ export function estimateIcrIsf(
       icr: null,
       confidence: "low",
       deviates: false,
-      note: `可用餐次僅 ${regUsable.length} 筆（已排除有運動/狀態標記的餐），樣本不足，暫不估算。`,
+      note: `可用餐次僅 ${regUsable.length} 筆（已排除運動/狀態標記與間隔過近的餐），樣本不足，暫不估算。`,
     };
   }
 
+  // 階段 5.2：迴歸門檻隨「實際出現的時段啞變數數量」自適應提高。
+  const dummyCount = Math.max(0, presentMealTypes(regUsable).length - 1);
+  const required = minForReg + DUMMY_MEALS_PER_PARAM * dummyCount;
+
   // 資料夠多且迴歸可解 → 迴歸法（含沒打針的純碳水餐，同時得 ICR、ISF、信心區間）。
-  if (regUsable.length >= minForReg) {
+  if (regUsable.length >= required) {
     const reg = regressionIcrIsf(regUsable);
     if (reg) return { ...reg, configuredIcr, deviates: deviates(reg.icr, configuredIcr) };
   }
@@ -318,28 +372,48 @@ export function estimateIcrIsf(
   return medianIcr(medianUsable, settings);
 }
 
-// 迴歸法：Δ = β0 + β1·碳水 + β2·胰島素，得 a=β1、b=−β2、ISF=b、ICR=b/a。
+// 依固定順序回傳資料中實際出現的餐別（迴歸啞變數以此為準）。
+const MEAL_TYPE_ORDER: MealType[] = ["breakfast", "lunch", "dinner", "snack"];
+function presentMealTypes(meals: Meal[]): MealType[] {
+  return MEAL_TYPE_ORDER.filter((t) => meals.some((m) => m.meal_type === t));
+}
+
+// 迴歸法：Δ = β0 + β1·碳水 + β2·胰島素 (+ 各時段啞變數)，得 a=β1、b=−β2、ISF=b、ICR=b/a。
+// 階段 5.2：資料含多種餐別時，為基準外的各時段加一個啞變數，吸收各時段的基礎血糖漂移，
+//   排除生理時鐘對 a/b 的干擾（只有單一餐別時不加，行為與舊版一致）。
+// 階段 5.1：先用 OLS；若因共線性（如總是照碳水÷ICR 打針）導致 XᵀX 奇異「當機」，
+//   退用嶺迴歸（L2）保證可解、極度穩定。
 function regressionIcrIsf(meals: Meal[]): IcrIsfEstimate | null {
+  const present = presentMealTypes(meals);
+  const dummyTypes = present.slice(1); // 第一個出現的時段當基準。
+
   const X: number[][] = [];
   const y: number[] = [];
   for (const m of meals) {
-    X.push([1, m.total_carbs, m.insulin_units]);
+    const row = [1, m.total_carbs, m.insulin_units];
+    for (const t of dummyTypes) row.push(m.meal_type === t ? 1 : 0);
+    X.push(row);
     y.push((m.glucose_after as number) - (m.glucose_before as number));
   }
 
-  const fit = ols(X, y);
+  let fit = ols(X, y, 0);
+  let ridged = false;
+  if (!fit) {
+    fit = ols(X, y, ridgeLambda(X));
+    ridged = true;
+  }
   if (!fit) return null;
 
-  const [c, beta1, beta2] = fit.beta;
-  const a = beta1;
-  const b = -beta2;
+  const c = fit.beta[0];
+  const a = fit.beta[1];
+  const b = -fit.beta[2];
   // 物理上必須 a>0（碳水升糖）、b>0（胰島素降糖），否則資料被混淆、迴歸不可信。
   if (!(a > 0) || !(b > 0)) return null;
 
   const icr = b / a;
   const isf = b;
 
-  // 變異數：cov = σ²·(XᵀX)⁻¹。ISF=b=−β2 → Var(b)=Var(β2)。
+  // 變異數：cov 為 σ²·夾心矩陣（嶺迴歸時亦適用，λ=0 即退化為 (XᵀX)⁻¹）。
   const varA = fit.cov[1][1];
   const varB = fit.cov[2][2];
   const covAB = -fit.cov[1][2]; // Cov(a,b)=Cov(β1,−β2)=−Cov(β1,β2)
@@ -360,6 +434,11 @@ function regressionIcrIsf(meals: Meal[]): IcrIsfEstimate | null {
   const confidence: IcrIsfEstimate["confidence"] =
     relHalfWidth < 0.15 ? "high" : relHalfWidth < 0.35 ? "mid" : "low";
 
+  const segNote = dummyTypes.length > 0 ? "，並控制各餐別的基礎血糖差異" : "";
+  const note = ridged
+    ? `以嶺迴歸（L2 正則化）估算（資料偏共線，已穩定化）${segNote}，同時得 ICR 與 ISF。`
+    : `以迴歸模型估算（用上所有正常餐次，含偏高/偏低）${segNote}，同時得 ICR 與 ISF。`;
+
   return {
     method: "regression",
     icr,
@@ -371,8 +450,19 @@ function regressionIcrIsf(meals: Meal[]): IcrIsfEstimate | null {
     configuredIcr: 0, // 由呼叫端填入
     deviates: false, // 由呼叫端填入
     model: { a, b, c },
-    note: `以迴歸模型估算（用上所有正常餐次，含偏高/偏低），同時得 ICR 與 ISF。`,
+    note,
   };
+}
+
+// 嶺迴歸正則化強度：相對於非截距欄位的平均尺度，確保 λ 與資料量級相稱。
+function ridgeLambda(X: number[][]): number {
+  const k = X[0].length;
+  let sum = 0;
+  for (let a = 1; a < k; a++) {
+    for (const row of X) sum += row[a] * row[a];
+  }
+  const cols = k - 1;
+  return cols > 0 ? (RIDGE_ALPHA * sum) / cols : RIDGE_ALPHA;
 }
 
 // 偏差校正中位數法：把血糖偏離目標用先驗 ISF 換成劑量差，回推每餐隱含 ICR 取中位數。
@@ -858,10 +948,13 @@ export function foodImpactAdaptive(
 
 // ---- 線性代數小工具（迴歸用）----
 
-// 普通最小平方法：解 β 使 Xβ≈y，回傳係數與共變異矩陣（cov=σ²(XᵀX)⁻¹）。
+// 最小平方法（可選 L2 嶺迴歸）：解 β 使 Xβ≈y。
+// lambda=0 即一般 OLS、cov=σ²(XᵀX)⁻¹；lambda>0 時 M=XᵀX+λI（不罰截距），
+// cov 用夾心式 σ²·M⁻¹(XᵀX)M⁻¹（λ=0 時退化為 σ²(XᵀX)⁻¹，與舊版一致）。
 function ols(
   X: number[][],
   y: number[],
+  lambda: number = 0,
 ): { beta: number[]; cov: number[][] } | null {
   const n = X.length;
   const k = X[0].length;
@@ -877,10 +970,14 @@ function ols(
     }
   }
 
-  const xtxInv = invert(xtx);
-  if (!xtxInv) return null; // 奇異（共線性，迴歸不可解）
+  // M = XᵀX + λI（截距 index 0 不正則化）。
+  const m = xtx.map((row, i) =>
+    row.map((v, j) => (i === j && i > 0 ? v + lambda : v)),
+  );
+  const mInv = invert(m);
+  if (!mInv) return null; // 奇異（共線性，迴歸不可解）
 
-  const beta = matVec(xtxInv, xty);
+  const beta = matVec(mInv, xty);
 
   // 殘差變異數 σ² = RSS/(n−k)
   let rss = 0;
@@ -891,8 +988,27 @@ function ols(
   }
   const sigma2 = rss / (n - k);
 
-  const cov = xtxInv.map((row) => row.map((v) => v * sigma2));
+  // cov = σ²·M⁻¹(XᵀX)M⁻¹
+  const cov = matMul(matMul(mInv, xtx), mInv).map((row) =>
+    row.map((v) => v * sigma2),
+  );
   return { beta, cov };
+}
+
+// 矩陣相乘。
+function matMul(a: number[][], b: number[][]): number[][] {
+  const r = a.length;
+  const c = b[0].length;
+  const inner = b.length;
+  const out = zeros(r, c);
+  for (let i = 0; i < r; i++) {
+    for (let k = 0; k < inner; k++) {
+      const aik = a[i][k];
+      if (aik === 0) continue;
+      for (let j = 0; j < c; j++) out[i][j] += aik * b[k][j];
+    }
+  }
+  return out;
 }
 
 function zeros(r: number, c: number): number[][] {

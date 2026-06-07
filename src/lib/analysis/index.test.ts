@@ -4,6 +4,8 @@ import { foodCarbs } from "@/lib/types";
 import {
   isCleanMeal,
   cleanMeals,
+  wellSpacedMeals,
+  recentMeals,
   estimateIcrIsf,
   mealTypeIcrHints,
   icrConfidenceTrend,
@@ -30,6 +32,11 @@ function makeMeal(p: Partial<Meal> & { id: string }): Meal {
     created_at: "2026-06-01T08:00:00Z",
     ...p,
   };
+}
+
+// 第 i 天的 08:00（UTC），用來造「間隔 > 4 小時的獨立乾淨餐」（階段 5.3）。
+function dayIso(i: number): string {
+  return new Date(Date.UTC(2026, 0, 1 + i, 8, 0, 0)).toISOString();
 }
 
 function makeMealFood(p: Partial<MealFood> & { meal_id: string }): MealFood {
@@ -121,6 +128,7 @@ describe("estimateIcrIsf", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: insulin,
           glucose_before: before,
@@ -146,6 +154,7 @@ describe("estimateIcrIsf", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: carbs / 5, // ICR=5
           glucose_before: 100,
@@ -187,6 +196,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: insulin,
           glucose_before: 100,
@@ -200,6 +210,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `z${i}`,
+          eaten_at: dayIso(30 + i),
           total_carbs: carbs,
           insulin_units: 0,
           glucose_before: 100,
@@ -224,6 +235,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: carbs / 5,
           glucose_before: 100,
@@ -236,6 +248,7 @@ describe("沒打針的純碳水餐", () => {
       meals.push(
         makeMeal({
           id: `z${i}`,
+          eaten_at: dayIso(5 + i),
           total_carbs: 50,
           insulin_units: 0,
           glucose_before: 100,
@@ -248,6 +261,102 @@ describe("沒打針的純碳水餐", () => {
     expect(r.method).toBe("median");
     expect(r.n).toBe(5); // 只算有打針的 5 筆
     expect(r.icr).toBeCloseTo(5, 6);
+  });
+});
+
+// ---- 階段 5.2：時段啞變數 ----
+
+describe("時段啞變數（5.2）", () => {
+  it("不同時段基礎血糖不同時，加啞變數仍能正確回推 ICR/ISF", () => {
+    // 真值 ICR=7、ISF=35（a=5）；早餐基線 0、晚餐基線 +40（晚餐整體偏高）。
+    const ICR = 7;
+    const ISF = 35;
+    const a = ISF / ICR;
+    const meals: Meal[] = [];
+    for (let i = 0; i < 40; i++) {
+      const carbs = 30 + (i % 7) * 10;
+      const insulin = carbs / ICR + ((i % 3) - 1) * 2; // 與碳水獨立變化
+      const isDinner = i >= 20;
+      const baseline = isDinner ? 40 : 0;
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          eaten_at: dayIso(i),
+          meal_type: isDinner ? "dinner" : "breakfast",
+          total_carbs: carbs,
+          insulin_units: insulin,
+          glucose_before: 100,
+          glucose_after: 100 + baseline + a * carbs - ISF * insulin,
+        }),
+      );
+    }
+    const r = estimateIcrIsf(meals, SETTINGS);
+    expect(r.method).toBe("regression");
+    expect(r.icr).toBeCloseTo(7, 3);
+    expect(r.isf).toBeCloseTo(35, 3);
+  });
+});
+
+// ---- 階段 5.3：獨立乾淨餐（>4 小時間隔）----
+
+describe("wellSpacedMeals（5.3）", () => {
+  it("同一天密集進食只留第一餐", () => {
+    const base = Date.UTC(2026, 0, 1, 8, 0, 0);
+    const meals = [0, 1, 2, 5].map((h, i) =>
+      makeMeal({
+        id: `m${i}`,
+        eaten_at: new Date(base + h * 3_600_000).toISOString(),
+      }),
+    );
+    // 08:00 留、09:00 排除、10:00 排除、13:00 留（距前一餐 3h... 不，距 10:00 為 3h → 排除）
+    // 修正：間隔 0/1h/1h/3h → 只有第一餐（08:00）獨立。
+    expect(wellSpacedMeals(meals).map((m) => m.id)).toEqual(["m0"]);
+  });
+
+  it("間隔都大於 4 小時則全留", () => {
+    const meals = [0, 1, 2].map((d) => makeMeal({ id: `d${d}`, eaten_at: dayIso(d) }));
+    expect(wellSpacedMeals(meals)).toHaveLength(3);
+  });
+});
+
+// ---- 階段 D：滾動窗口 ----
+
+describe("recentMeals（D）", () => {
+  it("只留最近 N 天的餐", () => {
+    const now = new Date(Date.UTC(2026, 0, 31, 8, 0, 0));
+    const meals = [
+      makeMeal({ id: "old", eaten_at: dayIso(0) }), // 1/1
+      makeMeal({ id: "mid", eaten_at: dayIso(20) }), // 1/21
+      makeMeal({ id: "new", eaten_at: dayIso(29) }), // 1/30
+    ];
+    const recent = recentMeals(meals, 15, now).map((m) => m.id);
+    expect(recent).toEqual(["mid", "new"]);
+  });
+});
+
+// ---- 階段 5.1：共線資料不當機 ----
+
+describe("嶺迴歸／共線穩定（5.1）", () => {
+  it("完全照碳水÷ICR 打針造成共線時，估算不當機、仍給得出結果", () => {
+    const ICR = 5;
+    const meals: Meal[] = [];
+    for (let i = 0; i < 35; i++) {
+      const carbs = 40 + (i % 5) * 10;
+      meals.push(
+        makeMeal({
+          id: `m${i}`,
+          eaten_at: dayIso(i),
+          total_carbs: carbs,
+          insulin_units: carbs / ICR, // 與碳水完全共線
+          glucose_before: 100,
+          glucose_after: 150, // 餐後偏高（劑量不足）
+        }),
+      );
+    }
+    const r = estimateIcrIsf(meals, SETTINGS);
+    expect(r.method).not.toBe("insufficient");
+    expect(r.icr).not.toBeNull();
+    expect(Number.isFinite(r.icr as number)).toBe(true);
   });
 });
 
@@ -273,7 +382,7 @@ describe("icrConfidenceTrend", () => {
       meals.push(
         makeMeal({
           id: `m${i}`,
-          eaten_at: `2026-06-${String((i % 28) + 1).padStart(2, "0")}T08:00:00Z`,
+          eaten_at: dayIso(i),
           total_carbs: carbs,
           insulin_units: insulin,
           glucose_before: 100,
@@ -305,6 +414,7 @@ describe("mealTypeIcrHints", () => {
       breakfasts.push(
         makeMeal({
           id: `b${i}`,
+          eaten_at: dayIso(i),
           meal_type: "breakfast",
           total_carbs: 80,
           insulin_units: 10, // 80/10 = 8
@@ -314,7 +424,7 @@ describe("mealTypeIcrHints", () => {
       );
     }
     // 午餐只有 1 筆 → 不足、不提示。
-    const lunch = makeMeal({ id: "l1", meal_type: "lunch" });
+    const lunch = makeMeal({ id: "l1", eaten_at: dayIso(20), meal_type: "lunch" });
 
     const hints = mealTypeIcrHints([...breakfasts, lunch], SETTINGS, 5);
     expect(hints).toHaveLength(1);

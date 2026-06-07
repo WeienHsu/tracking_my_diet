@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { listMeals, type ListMealsFilter } from "@/lib/repositories/meals";
 import { getSettings } from "@/lib/repositories/settings";
-import { estimateIcrIsf } from "@/lib/analysis";
+import { estimateIcrIsf, DEFAULT_WINDOW_DAYS } from "@/lib/analysis";
 import {
   MEAL_TYPE_LABELS,
   type MealType,
@@ -87,7 +87,9 @@ export default async function HistoryPage({
     target_glucose_high: target.high,
     icr: 5,
   }) as Settings;
-  const model = estimateIcrIsf(allMeals, estSettings).model;
+  const model = estimateIcrIsf(allMeals, estSettings, {
+    windowDays: DEFAULT_WINDOW_DAYS,
+  }).model;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-5 py-8">
