@@ -79,15 +79,6 @@ export async function updateMeal(
   return data as Meal;
 }
 
-// 餐後血糖常於兩小時後才補填。
-export async function updateGlucoseAfter(
-  supabase: SupabaseClient,
-  id: string,
-  glucoseAfter: number,
-): Promise<Meal> {
-  return updateMeal(supabase, id, { glucose_after: glucoseAfter });
-}
-
 export async function deleteMeal(
   supabase: SupabaseClient,
   id: string,
