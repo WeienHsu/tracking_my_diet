@@ -296,8 +296,10 @@ export default function LogForm({
           l.carbsPerUnit > 0,
       );
 
-    if (lines.length === 0) {
-      setMessage({ type: "err", text: "請至少加入一項有碳水的食物。" });
+    // 食物可不填（純補打：只記血糖＋加打劑量）；但三者全空不收。
+    const insulinNum = Number(insulinValue) || 0;
+    if (lines.length === 0 && insulinNum <= 0 && glucoseBefore === "" && glucoseAfter === "") {
+      setMessage({ type: "err", text: "請至少填一項食物、施打劑量或血糖。" });
       return;
     }
 
