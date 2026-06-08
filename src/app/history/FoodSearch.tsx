@@ -8,13 +8,11 @@ import {
 } from "@/lib/types";
 import {
   searchFoodAggregates,
+  RESIDUAL_FLAG,
   type FoodSearchGroup,
   type FoodOutcomeStats,
   type IcrModel,
 } from "@/lib/analysis";
-
-// 殘差超過此值（mg/dL）才標「比預期更易升糖」。
-const RESIDUAL_FLAG = 15;
 
 export default function FoodSearch({
   meals,

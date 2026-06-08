@@ -13,12 +13,16 @@ import {
   recentFoodEntries,
   searchFoodAggregates,
   foodResiduals,
+  foodResidualFor,
   foodImpactAdaptive,
   insulinOnBoard,
   iobFraction,
   suggestDose,
   postMealElapsedMin,
   withinPostMealWindow,
+  buildTrend,
+  regressionUsableMeals,
+  RESIDUAL_FLAG,
 } from "./index";
 
 // ---- 測試用建構子 ----
@@ -877,5 +881,77 @@ describe("foodResiduals", () => {
     expect(res[0].avgResidual).toBeCloseTo(60, 6);
     expect(res[1].foodName).toBe("燙青菜");
     expect(res[1].avgResidual).toBeCloseTo(-10, 6);
+  });
+});
+
+// ---- 單一食物殘差（記錄頁即時警示用）----
+
+describe("foodResidualFor", () => {
+  const model = { a: 5, b: 30, c: 0 };
+  const meals = [
+    makeMeal({ id: "mA", total_carbs: 10, insulin_units: 2, glucose_before: 100, glucose_after: 150 }),
+  ];
+  const mealFoods = [makeMealFood({ meal_id: "mA", food_name: "含糖飲料" })];
+
+  it("無模型時回 null（資料不足不顯示）", () => {
+    expect(foodResidualFor(null, "含糖飲料", meals, mealFoods, null)).toBeNull();
+  });
+
+  it("有模型時回該食物平均殘差，且超過門檻可判定為更易升糖", () => {
+    const r = foodResidualFor(null, "含糖飲料", meals, mealFoods, model);
+    expect(r).toBeCloseTo(60, 6);
+    expect(r! > RESIDUAL_FLAG).toBe(true);
+  });
+
+  it("查無此食物時回 null", () => {
+    expect(foodResidualFor(null, "不存在", meals, mealFoods, model)).toBeNull();
+  });
+});
+
+// ---- 血糖趨勢（同日多餐不再重複）----
+
+describe("buildTrend", () => {
+  it("同一天的多餐各自成為相異點（標籤含時間）", () => {
+    const meals = [
+      makeMeal({ id: "m2", eaten_at: "2026-06-01T12:30:00Z", glucose_before: 110, glucose_after: 160 }),
+      makeMeal({ id: "m1", eaten_at: "2026-06-01T08:00:00Z", glucose_before: 100, glucose_after: 140 }),
+    ];
+    const trend = buildTrend(meals);
+    expect(trend).toHaveLength(2);
+    // 兩點標籤不相同（含時間），避免同日重複造成圖表異常。
+    expect(trend[0].t).not.toBe(trend[1].t);
+    // 由舊到新排序：第一點為較早的餐。
+    expect(trend[0].before).toBe(100);
+    expect(trend[1].before).toBe(110);
+  });
+});
+
+// ---- 可納入迴歸的餐次（歷史頁標記用）----
+
+describe("regressionUsableMeals", () => {
+  it("只留乾淨、獨立間隔且量測窗有效的餐，與 estimateIcrIsf 篩選一致", () => {
+    const meals = [
+      // 乾淨、獨立（各差一天）、有餐前後 → 納入
+      makeMeal({ id: "ok1", eaten_at: dayIso(0) }),
+      makeMeal({ id: "ok2", eaten_at: dayIso(1) }),
+      // 有運動 → 不正常，排除
+      makeMeal({ id: "exercise", eaten_at: dayIso(2), exercise: "light" }),
+      // 與前一餐間隔過近（同日 +1h）→ 排除
+      makeMeal({
+        id: "tooClose",
+        eaten_at: new Date(Date.UTC(2026, 0, 4, 9, 0, 0)).toISOString(),
+      }),
+      makeMeal({
+        id: "tooCloseAfter",
+        eaten_at: new Date(Date.UTC(2026, 0, 4, 11, 0, 0)).toISOString(),
+      }),
+    ];
+    const ids = new Set(
+      regressionUsableMeals(meals, SETTINGS, { windowDays: null }).map((m) => m.id),
+    );
+    expect(ids.has("ok1")).toBe(true);
+    expect(ids.has("ok2")).toBe(true);
+    expect(ids.has("exercise")).toBe(false);
+    expect(ids.has("tooCloseAfter")).toBe(false);
   });
 });

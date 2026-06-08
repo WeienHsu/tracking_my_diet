@@ -9,7 +9,13 @@ import {
   deleteMealAction,
 } from "./actions";
 
-export default function MealList({ meals }: { meals: MealWithFoods[] }) {
+export default function MealList({
+  meals,
+  regUsableIds,
+}: {
+  meals: MealWithFoods[];
+  regUsableIds: Set<string>;
+}) {
   if (meals.length === 0) {
     return (
       <p className="py-12 text-center text-sm text-zinc-400 dark:text-zinc-500">
@@ -20,13 +26,19 @@ export default function MealList({ meals }: { meals: MealWithFoods[] }) {
   return (
     <ul className="flex flex-col gap-3">
       {meals.map((m) => (
-        <MealCard key={m.id} meal={m} />
+        <MealCard key={m.id} meal={m} inRegression={regUsableIds.has(m.id)} />
       ))}
     </ul>
   );
 }
 
-function MealCard({ meal }: { meal: MealWithFoods }) {
+function MealCard({
+  meal,
+  inRegression,
+}: {
+  meal: MealWithFoods;
+  inRegression: boolean;
+}) {
   const [pending, startTransition] = useTransition();
   const [after, setAfter] = useState("");
   const [afterAt, setAfterAt] = useState(nowLocalInput); // 餐後讀數的量測時間（B′）
@@ -96,6 +108,15 @@ function MealCard({ meal }: { meal: MealWithFoods }) {
           <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
             {MEAL_TYPE_LABELS[meal.meal_type]}
           </span>
+          {/* 這筆是否被納入 ICR/ISF 迴歸分析（對分析有貢獻）；低干擾小點，不影響閱讀 */}
+          {inRegression && (
+            <span
+              className="ml-1.5 text-xs text-emerald-600 dark:text-emerald-400"
+              title="已納入迴歸分析（乾淨、獨立、量測時間有效的餐次）"
+            >
+              ●
+            </span>
+          )}
           {/* 時間以瀏覽器當地時區/locale 顯示，與伺服器 ICU 版本可能有微小差異（如 AM/PM 分隔字元），故抑制 hydration 警告、以用戶端值為準 */}
           <span
             className="ml-2 text-sm text-zinc-500 dark:text-zinc-400"

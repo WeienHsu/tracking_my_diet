@@ -28,7 +28,33 @@ export async function updateSession(request: NextRequest) {
   );
 
   // 觸發 session 刷新（必要：會把更新後的 token 寫回 cookie）。
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // 安全防禦：Email 白名單。設定 ALLOWED_EMAILS（逗號分隔）後，
+  // 非名單內的已登入帳號一律登出並導向 /unauthorized。
+  // 未設定 ALLOWED_EMAILS 時視為不限制（本機/未設定環境不致全鎖）。
+  const allowed = (process.env.ALLOWED_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (allowed.length > 0 && user?.email) {
+    const path = request.nextUrl.pathname;
+    // 豁免：未授權頁與 auth 路由（callback/signout）需可正常運作，避免無限轉址。
+    const exempt = path === "/unauthorized" || path.startsWith("/auth/");
+    if (!exempt && !allowed.includes(user.email.toLowerCase())) {
+      await supabase.auth.signOut();
+      const url = request.nextUrl.clone();
+      url.pathname = "/unauthorized";
+      url.search = "";
+      const redirect = NextResponse.redirect(url);
+      // 把 signOut 清除 session 的 cookie 帶到轉址回應上。
+      supabaseResponse.cookies.getAll().forEach((c) => redirect.cookies.set(c));
+      return redirect;
+    }
+  }
 
   return supabaseResponse;
 }
