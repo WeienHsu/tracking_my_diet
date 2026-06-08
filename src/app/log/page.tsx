@@ -61,9 +61,12 @@ export default async function LogPage() {
     target_glucose_low: target.low,
     target_glucose_high: target.high,
   }) as Settings;
-  const icrEstimate = estimateIcrIsf(meals, estSettings, {
+  const estimate = estimateIcrIsf(meals, estSettings, {
     windowDays: DEFAULT_WINDOW_DAYS,
-  }).icr;
+  });
+  const icrEstimate = estimate.icr;
+  // 迴歸模型供記錄頁即時判斷食物「比預期更易升糖」（無模型時為 null，不顯示）。
+  const icrModel = estimate.model;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-5 px-5 py-8">
@@ -94,6 +97,7 @@ export default async function LogPage() {
         advancedDose={advancedDose}
         iobParams={iobParams}
         icrEstimate={icrEstimate}
+        model={icrModel}
       />
     </main>
   );

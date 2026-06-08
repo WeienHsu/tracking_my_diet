@@ -28,6 +28,12 @@ npm run migrate
 Connection string，建議用 pooler 字串，並把密碼填入）。重新部署或換新環境時，跑一次
 `npm run migrate` 即可重建所有資料表與 RLS；已套用的 migration 會自動跳過。
 
+## 存取控制（Email 白名單）
+
+正式環境請在環境變數設 `ALLOWED_EMAILS`（逗號分隔，例：`a@gmail.com,b@gmail.com`）。
+只有名單內的 Google 帳號可使用系統，其餘登入後會被自動登出並導向 `/unauthorized`。
+未設 `ALLOWED_EMAILS` 時不做限制（方便本機開發），上線務必設定。
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

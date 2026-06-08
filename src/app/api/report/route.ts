@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { listMeals } from "@/lib/repositories/meals";
@@ -117,6 +118,29 @@ export async function POST(req: Request) {
     })),
   };
 
+  // 快取＋資料變動偵測：以送進 Gemini 的 stats 內容算雜湊（meals 無 updated_at，故用內容比對）。
+  // 同期間若 hash 未變 → 直接回快取，不打 Gemini，避免重複點擊刷爆額度。
+  const periodFrom = body.from ?? "";
+  const periodTo = body.to ?? "";
+  const contentHash = createHash("sha256")
+    .update(JSON.stringify(stats))
+    .digest("hex");
+
+  const { data: cached } = await supabase
+    .from("ai_reports")
+    .select("report, stats, content_hash")
+    .eq("period_from", periodFrom)
+    .eq("period_to", periodTo)
+    .maybeSingle();
+
+  if (cached && cached.content_hash === contentHash) {
+    return NextResponse.json({
+      report: cached.report,
+      stats: cached.stats ?? stats,
+      cached: true,
+    });
+  }
+
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
     {
@@ -150,6 +174,19 @@ export async function POST(req: Request) {
       { status: 502 },
     );
   }
+
+  // 寫入/覆寫該期間快取，供下次相同資料直接回傳。
+  await supabase.from("ai_reports").upsert(
+    {
+      user_id: user.id,
+      period_from: periodFrom,
+      period_to: periodTo,
+      content_hash: contentHash,
+      report,
+      stats,
+    },
+    { onConflict: "user_id,period_from,period_to" },
+  );
 
   return NextResponse.json({ report, stats });
 }

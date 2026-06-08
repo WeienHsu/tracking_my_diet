@@ -77,18 +77,19 @@ function PendingRow({ meal }: { meal: PendingMeal }) {
   }
 
   return (
-    <li className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200">
-          {formatTime(meal.eatenAt)}・{meal.label}
-        </span>
+    <li className="flex flex-col gap-2">
+      {/* 進食內容獨立一行、完整顯示，不再被輸入框擠壓 */}
+      <span className="text-sm text-zinc-700 dark:text-zinc-200">
+        {formatTime(meal.eatenAt)}・{meal.label}
+      </span>
+      <div className="flex gap-2">
         <input
           type="number"
           inputMode="numeric"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="餐後血糖"
-          className="h-10 w-28 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
+          className="h-10 min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 text-sm"
         />
         <button
           type="button"
