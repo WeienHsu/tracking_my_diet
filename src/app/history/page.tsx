@@ -3,7 +3,11 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { listMeals, type ListMealsFilter } from "@/lib/repositories/meals";
 import { getSettings } from "@/lib/repositories/settings";
-import { estimateIcrIsf, DEFAULT_WINDOW_DAYS } from "@/lib/analysis";
+import {
+  estimateIcrIsf,
+  regressionUsableMeals,
+  DEFAULT_WINDOW_DAYS,
+} from "@/lib/analysis";
 import {
   MEAL_TYPE_LABELS,
   type MealType,
@@ -90,6 +94,12 @@ export default async function HistoryPage({
   const model = estimateIcrIsf(allMeals, estSettings, {
     windowDays: DEFAULT_WINDOW_DAYS,
   }).model;
+  // 哪些餐次實際被納入迴歸分析（同一套篩選），供列表標記「對分析有貢獻」。
+  const regUsableIds = new Set(
+    regressionUsableMeals(allMeals, estSettings, {
+      windowDays: DEFAULT_WINDOW_DAYS,
+    }).map((m) => m.id),
+  );
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-5 py-8">
@@ -167,7 +177,7 @@ export default async function HistoryPage({
 
       <p className="text-xs text-zinc-400 dark:text-zinc-500">共 {meals.length} 筆</p>
 
-      <MealList meals={meals} />
+      <MealList meals={meals} regUsableIds={regUsableIds} />
     </main>
   );
 }

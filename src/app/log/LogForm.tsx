@@ -23,8 +23,11 @@ import {
   recentFoodEntries,
   insulinOnBoard,
   suggestDose,
+  foodResidualFor,
+  RESIDUAL_FLAG,
   type FoodOutcomeStats,
   type FoodRecentEntry,
+  type IcrModel,
 } from "@/lib/analysis";
 import { createMealAction, syncFoodDefaultAction } from "./actions";
 
@@ -106,6 +109,7 @@ export default function LogForm({
   advancedDose,
   iobParams,
   icrEstimate,
+  model,
 }: {
   foods: FoodOption[];
   icr: number;
@@ -118,6 +122,7 @@ export default function LogForm({
   advancedDose: boolean;
   iobParams: { diaMin: number; peakMin: number; autoSubtract: boolean };
   icrEstimate: number | null;
+  model: IcrModel | null;
 }) {
   const router = useRouter();
 
@@ -132,6 +137,8 @@ export default function LogForm({
   const [doseTouched, setDoseTouched] = useState(false);
   // 1.2：是否改用反推 ICR 計算建議。
   const [useEstimatedIcr, setUseEstimatedIcr] = useState(false);
+  // 4.1：這一餐是否從建議劑量扣除疊藥（IOB）；預設跟隨全域設定，可逐筆覆寫。
+  const [subtractIob, setSubtractIob] = useState(iobParams.autoSubtract);
   const [glucoseAfter, setGlucoseAfter] = useState("");
   const [exercise, setExercise] = useState<Exercise>("none");
   const [context, setContext] = useState<MealContext[]>([]);
@@ -179,9 +186,9 @@ export default function LogForm({
         glucoseBefore: glucoseBeforeNum,
         correctionTarget,
         iob,
-        subtractIob: iobParams.autoSubtract,
+        subtractIob,
       }),
-    [totalCarbs, effectiveIcr, advancedDose, isf, glucoseBeforeNum, correctionTarget, iob, iobParams.autoSubtract],
+    [totalCarbs, effectiveIcr, advancedDose, isf, glucoseBeforeNum, correctionTarget, iob, subtractIob],
   );
   const suggestedDose = suggestion.dose;
 
@@ -537,6 +544,7 @@ export default function LogForm({
                 meals={meals}
                 mealFoods={mealFoods}
                 target={target}
+                model={model}
               />
             </div>
           ))}
@@ -587,15 +595,28 @@ export default function LogForm({
           </div>
         )}
 
-        {/* 4.1：疊藥警示 */}
-        {iob > 0 && (
-          <p className="mt-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300">
-            ⚠️ 疊藥提醒：還有約 {round1(iob)} 單位活性胰島素未代謝完（作用時間約{" "}
-            {round1(iobParams.diaMin / 60)} 小時）。
-            {advancedDose && iobParams.autoSubtract
-              ? "已從建議中扣除，請留意低血糖風險。"
-              : "目前未自動扣除，請自行斟酌。"}
-          </p>
+        {/* 4.1：疊藥警示（顯示值已代謝完＝0 時不顯示黃框，避免誤看） */}
+        {round1(iob) > 0 && (
+          <>
+            <p className="mt-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300">
+              ⚠️ 疊藥提醒：還有約 {round1(iob)} 單位活性胰島素未代謝完（作用時間約{" "}
+              {round1(iobParams.diaMin / 60)} 小時）。
+              {advancedDose && subtractIob
+                ? "已從建議中扣除，請留意低血糖風險。"
+                : "目前未自動扣除，請自行斟酌。"}
+            </p>
+            {advancedDose && (
+              <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={subtractIob}
+                  onChange={(e) => setSubtractIob(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                從建議劑量扣除疊藥 −{round1(iob)} 單位
+              </label>
+            )}
+          </>
         )}
 
         {/* 1.2：一鍵切換用反推 ICR */}
@@ -814,12 +835,14 @@ function FoodStats({
   meals,
   mealFoods,
   target,
+  model,
 }: {
   brand: string;
   name: string;
   meals: Meal[];
   mealFoods: MealFood[];
   target: { low: number; high: number };
+  model: IcrModel | null;
 }) {
   const agg = useMemo(() => {
     if (name.trim().length < 1) return null;
@@ -835,6 +858,13 @@ function FoodStats({
     return recentFoodEntries({ brand, name }, meals, mealFoods, 3);
   }, [brand, name, meals, mealFoods]);
 
+  // 「比預期更易升糖」即時警示：用迴歸殘差（與歷史頁同一套門檻）。
+  const residual = useMemo(
+    () => foodResidualFor(brand || null, name, meals, mealFoods, model),
+    [brand, name, meals, mealFoods, model],
+  );
+  const flagged = residual != null && residual > RESIDUAL_FLAG;
+
   if (!agg || agg.all.n === 0) return null;
 
   return (
@@ -842,6 +872,11 @@ function FoodStats({
       <p className="font-medium text-zinc-700 dark:text-zinc-200">
         過去吃「{name.trim()}」共 {agg.all.n} 次
       </p>
+      {flagged && (
+        <p className="mt-1 inline-block rounded bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+          ⚠️ 比預期更易升糖，平均高出模型 {round0(residual!)} mg/dL
+        </p>
+      )}
       {agg.solo.n > 0 && (
         <StatsLine
           label="單獨吃"
@@ -951,6 +986,10 @@ function Field({
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+function round0(n: number): number {
+  return Math.round(n);
 }
 
 // 3.1：與食物庫預設碳水比對，找出這次微調過、值不同的食物。

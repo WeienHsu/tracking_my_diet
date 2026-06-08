@@ -37,7 +37,12 @@ export default function HomeCharts({
               margin={{ top: 5, right: 8, bottom: 0, left: -16 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
-              <XAxis dataKey="t" tick={{ fontSize: 11 }} />
+              <XAxis
+                dataKey="t"
+                tick={{ fontSize: 11 }}
+                interval="preserveStartEnd"
+                minTickGap={24}
+              />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
               <Legend wrapperStyle={{ fontSize: 12 }} />

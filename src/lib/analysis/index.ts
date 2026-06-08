@@ -80,10 +80,14 @@ export const DEFAULT_WINDOW_DAYS = 90;
 // ---- 血糖趨勢（時間由舊到新）----
 
 export function buildTrend(meals: Meal[]): TrendPoint[] {
+  // 標籤含日期+時間：同一天的多餐才會各自成為相異點（否則重複日期標籤會讓圖表顯示異常）。
   return [...meals].reverse().map((m) => ({
-    t: new Date(m.eaten_at).toLocaleDateString("zh-TW", {
+    t: new Date(m.eaten_at).toLocaleString("zh-TW", {
       month: "numeric",
       day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
     }),
     before: m.glucose_before,
     after: m.glucose_after,
@@ -360,6 +364,31 @@ export function recentMeals<T extends Meal>(
   return meals.filter((m) => new Date(m.eaten_at).getTime() >= cutoff);
 }
 
+// 「可納入迴歸估算」的乾淨餐：滾動窗口 → 獨立間隔 → 正常餐 → 有效量測窗 → 迴歸可用。
+// estimateIcrIsf 與歷史頁「是否納入分析」標記共用此單一篩選來源，避免兩處邏輯漂移。
+// 泛型保留輸入型別（如 MealWithFoods）。
+export function regressionUsableMeals<T extends Meal>(
+  meals: T[],
+  settings: Pick<Settings, "postmeal_window_lo_min" | "postmeal_window_hi_min">,
+  opts: { minGapHours?: number; windowDays?: number | null; now?: Date } = {},
+): T[] {
+  const minGapHours = opts.minGapHours ?? MIN_MEAL_GAP_HOURS;
+  const windowDays = opts.windowDays ?? null;
+  // 階段 D：先套滾動窗口（若有指定）。
+  const pool =
+    windowDays != null ? recentMeals(meals, windowDays, opts.now) : meals;
+  // 階段 5.3：以全部進食事件判定「獨立乾淨餐」。
+  const spacedIds = new Set(wellSpacedMeals(pool, minGapHours).map((m) => m.id));
+  // B′：只採用餐後讀數落在「有效量測窗」內的餐（未記量測時間的舊資料照舊納入）。
+  const loMin = settings.postmeal_window_lo_min ?? DEFAULT_POSTMEAL_LO_MIN;
+  const hiMin = settings.postmeal_window_hi_min ?? DEFAULT_POSTMEAL_HI_MIN;
+  return pool
+    .filter(isCleanMeal)
+    .filter((m) => spacedIds.has(m.id))
+    .filter((m) => withinPostMealWindow(m, loMin, hiMin))
+    .filter(usableForRegression);
+}
+
 // ---- 階段 1-B：自適應 ICR/ISF 估算 ----
 
 // 餐的物理模型：Δ血糖 ≈ a·碳水 − b·胰島素 + c，其中 a=ISF/ICR、b=ISF。
@@ -394,17 +423,12 @@ export function estimateIcrIsf(
   const windowDays = opts.windowDays ?? null;
   const configuredIcr = settings.icr;
 
-  // 階段 D：先套滾動窗口（若有指定）。
-  const pool = windowDays != null ? recentMeals(meals, windowDays, opts.now) : meals;
-  // 階段 5.3：以全部進食事件判定「獨立乾淨餐」，再與正常餐取交集。
-  const spacedIds = new Set(wellSpacedMeals(pool, minGapHours).map((m) => m.id));
-  const clean = cleanMeals(pool).filter((m) => spacedIds.has(m.id));
-  // B′：只採用餐後讀數落在「有效量測窗」內的餐（未記量測時間的舊資料照舊納入）。
-  const loMin = settings.postmeal_window_lo_min ?? DEFAULT_POSTMEAL_LO_MIN;
-  const hiMin = settings.postmeal_window_hi_min ?? DEFAULT_POSTMEAL_HI_MIN;
-  const windowed = clean.filter((m) => withinPostMealWindow(m, loMin, hiMin));
-  // 迴歸法用：含沒打針（胰島素=0）的純碳水餐。
-  const regUsable = windowed.filter(usableForRegression);
+  // 迴歸法用：含沒打針（胰島素=0）的純碳水餐（共用 regressionUsableMeals 單一篩選）。
+  const regUsable = regressionUsableMeals(meals, settings, {
+    minGapHours,
+    windowDays,
+    now: opts.now,
+  });
   // 中位數法用：須劑量>0（要算 碳水/劑量）。
   const medianUsable = regUsable.filter((m) => m.insulin_units > 0);
 
@@ -891,6 +915,9 @@ export type FoodResidual = {
   avgResidual: number; // 正=實際比模型預測更會升糖
 };
 
+// 平均殘差超過此值（mg/dL）才標「比預期更易升糖」。歷史頁與記錄頁共用同一門檻。
+export const RESIDUAL_FLAG = 15;
+
 // 需先有迴歸模型（model）；無模型時回空陣列（呼叫端不顯示）。
 export function foodResiduals(
   meals: Meal[],
@@ -958,6 +985,23 @@ function foodResidualsByKey(
     key,
     avgResidual: mean([...ids].map((id) => residualByMeal.get(id) as number)),
   }));
+}
+
+// 單一食物（嚴格品牌+名稱）的平均殘差；無模型、無名稱或查無紀錄時回 null。
+// 供記錄頁輸入食物時即時判斷是否「比預期更易升糖」，與歷史頁分組搜尋同一套算法。
+export function foodResidualFor(
+  brand: string | null,
+  name: string,
+  meals: Meal[],
+  mealFoods: MealFood[],
+  model: IcrModel | null,
+): number | null {
+  if (!model || name.trim() === "") return null;
+  const key = strictKey(brand, name);
+  const hit = foodResidualsByKey(meals, mealFoods, model).find(
+    (r) => r.key === key,
+  );
+  return hit ? hit.avgResidual : null;
 }
 
 // ---- 階段 4+：食物影響（自適應，取代易混淆的整餐平均上升）----
