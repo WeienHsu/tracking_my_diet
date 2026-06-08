@@ -33,8 +33,17 @@ const LogMealSchema = z.object({
   exercise: z.enum(["none", "light", "intense"]),
   context: z.array(z.enum(["illness", "stress", "alcohol"])),
   note: z.string().nullable(),
-  foods: z.array(FoodLineSchema).min(1, "請至少加入一項食物"),
-});
+  // 食物可不填：支援「只記血糖＋加打劑量」的純補打事件（碳水＝0，回歸自動排除）。
+  foods: z.array(FoodLineSchema),
+}).refine(
+  // 防呆：食物、施打、血糖三者全空的空白紀錄不收。
+  (d) =>
+    d.foods.length > 0 ||
+    d.insulinUnits > 0 ||
+    d.glucoseBefore != null ||
+    d.glucoseAfter != null,
+  { message: "請至少填一項食物、施打劑量或血糖。" },
+);
 
 export type LogFoodLine = {
   brand: string | null;
