@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { listMeals, type MealWithFoods } from "@/lib/repositories/meals";
 import { listA1c } from "@/lib/repositories/a1c";
 import { buildTrend } from "@/lib/analysis";
-import { foodLabel, MEAL_TYPE_LABELS } from "@/lib/types";
+import { foodLabel, mealCategoryLabel } from "@/lib/types";
 import HomeCharts from "./HomeCharts";
 import PendingGlucoseCard, { type PendingMeal } from "./PendingGlucoseCard";
 
@@ -22,7 +22,7 @@ function computeCandidates(meals: MealWithFoods[]): PendingMeal[] {
       eatenAt: m.eaten_at,
       label:
         m.meal_foods.map((f) => foodLabel(f.food_brand, f.food_name)).join("、") ||
-        MEAL_TYPE_LABELS[m.meal_type],
+        mealCategoryLabel(m),
     }));
 }
 
