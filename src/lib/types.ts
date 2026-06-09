@@ -9,6 +9,23 @@ export const MEAL_TYPE_LABELS: Record<MealType, string> = {
   snack: "點心",
 };
 
+// 純補打事件的顯示標籤：只記血糖＋加打劑量、沒吃東西，不歸早/午/晚/點心。
+export const CORRECTION_LABEL = "加打";
+
+// 純補打事件判定：該餐「沒有任何食物明細（meal_foods 為空）」。
+// 注意不能用 total_carbs===0 判，否則會把「零碳水正餐（純肉/純蛋）」也誤判成加打。
+export function isCorrectionOnly(m: { meal_foods?: unknown[] | null }): boolean {
+  return (m.meal_foods?.length ?? 0) === 0;
+}
+
+// 餐別／加打的顯示標籤：純補打回「加打」，否則回早/午/晚/點心。
+export function mealCategoryLabel(m: {
+  meal_type: MealType;
+  meal_foods?: unknown[] | null;
+}): string {
+  return isCorrectionOnly(m) ? CORRECTION_LABEL : MEAL_TYPE_LABELS[m.meal_type];
+}
+
 // 運動強度：影響胰島素敏感度，算 ICR 時可據此排除「不正常的餐」。
 export type Exercise = "none" | "light" | "intense";
 

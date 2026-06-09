@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { MEAL_TYPE_LABELS, foodLabel } from "@/lib/types";
+import { mealCategoryLabel, foodLabel } from "@/lib/types";
 import type { MealWithFoods } from "@/lib/repositories/meals";
 import {
   fillGlucoseAfterAction,
@@ -106,7 +106,7 @@ function MealCard({
       <div className="flex items-start justify-between">
         <div>
           <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-            {MEAL_TYPE_LABELS[meal.meal_type]}
+            {mealCategoryLabel(meal)}
           </span>
           {/* 這筆是否被納入 ICR/ISF 迴歸分析（對分析有貢獻）；低干擾小點，不影響閱讀 */}
           {inRegression && (

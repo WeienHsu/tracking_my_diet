@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Meal, MealFood, Settings } from "@/lib/types";
-import { foodCarbs, deriveCarbs, mealTypeForMinutes } from "@/lib/types";
+import { foodCarbs, deriveCarbs, mealTypeForMinutes, isCorrectionOnly } from "@/lib/types";
 import {
   isCleanMeal,
   cleanMeals,
@@ -22,6 +22,7 @@ import {
   withinPostMealWindow,
   buildTrend,
   regressionUsableMeals,
+  classifyLanding,
   RESIDUAL_FLAG,
 } from "./index";
 
@@ -248,10 +249,11 @@ describe("estimateIcrIsf", () => {
   });
 
   it("排除有運動/狀態標記的餐後才估算", () => {
+    // 各差一天，避免被獨立間隔濾網干擾，聚焦驗證 isCleanMeal（運動/狀態）排除。
     const meals = [
-      makeMeal({ id: "a" }),
-      makeMeal({ id: "b", exercise: "intense" }),
-      makeMeal({ id: "c", context: ["alcohol"] }),
+      makeMeal({ id: "a", eaten_at: dayIso(0) }),
+      makeMeal({ id: "b", eaten_at: dayIso(1), exercise: "intense" }),
+      makeMeal({ id: "c", eaten_at: dayIso(2), context: ["alcohol"] }),
     ];
     const r = estimateIcrIsf(meals, SETTINGS);
     // 只剩 1 筆正常餐 → 不足。
@@ -379,7 +381,7 @@ describe("時段啞變數（5.2）", () => {
 // ---- 階段 5.3：獨立乾淨餐（>4 小時間隔）----
 
 describe("wellSpacedMeals（5.3）", () => {
-  it("同一天密集進食只留第一餐", () => {
+  it("密集進食叢集整段排除（含第一餐，forward isolation）", () => {
     const base = Date.UTC(2026, 0, 1, 8, 0, 0);
     const meals = [0, 1, 2, 5].map((h, i) =>
       makeMeal({
@@ -387,9 +389,19 @@ describe("wellSpacedMeals（5.3）", () => {
         eaten_at: new Date(base + h * 3_600_000).toISOString(),
       }),
     );
-    // 08:00 留、09:00 排除、10:00 排除、13:00 留（距前一餐 3h... 不，距 10:00 為 3h → 排除）
-    // 修正：間隔 0/1h/1h/3h → 只有第一餐（08:00）獨立。
-    expect(wellSpacedMeals(meals).map((m) => m.id)).toEqual(["m0"]);
+    // 間隔 0/1h/1h/3h，沒有任何一筆前後都 >4h → 全段排除（叢集第一餐的餐後血糖被後餐污染）。
+    expect(wellSpacedMeals(meals)).toHaveLength(0);
+  });
+
+  it("前後都 >4h 才算獨立：被後一餐拉近的第一筆也排除", () => {
+    const base = Date.UTC(2026, 0, 1, 8, 0, 0);
+    // 08:00 與 11:00（差 3h）→ 兩筆互相干擾，皆排除；隔日 08:00 前後都 >4h → 留。
+    const meals = [
+      makeMeal({ id: "a", eaten_at: new Date(base).toISOString() }),
+      makeMeal({ id: "b", eaten_at: new Date(base + 3 * 3_600_000).toISOString() }),
+      makeMeal({ id: "iso", eaten_at: dayIso(1) }),
+    ];
+    expect(wellSpacedMeals(meals).map((m) => m.id)).toEqual(["iso"]);
   });
 
   it("間隔都大於 4 小時則全留", () => {
@@ -953,5 +965,46 @@ describe("regressionUsableMeals", () => {
     expect(ids.has("ok2")).toBe(true);
     expect(ids.has("exercise")).toBe(false);
     expect(ids.has("tooCloseAfter")).toBe(false);
+  });
+});
+
+// ---- 純補打判定 + 餐後落點排除（卡片 2 + Backlog #69）----
+
+describe("isCorrectionOnly", () => {
+  it("無 meal_foods → 加打事件", () => {
+    expect(isCorrectionOnly({ meal_foods: [] })).toBe(true);
+    expect(isCorrectionOnly({})).toBe(true);
+    expect(isCorrectionOnly({ meal_foods: null })).toBe(true);
+  });
+
+  it("有 meal_foods → 正餐（即使零碳水純肉/純蛋）", () => {
+    expect(isCorrectionOnly({ meal_foods: [{ carbs: 0 }] })).toBe(false);
+  });
+});
+
+describe("classifyLanding", () => {
+  const withFood = { meal_foods: [makeMealFood({ meal_id: "x" })] };
+
+  it("排除加打事件（無 meal_foods），即使填了餐後血糖", () => {
+    const meals = [
+      { ...makeMeal({ id: "meal", glucose_after: 120 }), ...withFood }, // 理想正餐
+      { ...makeMeal({ id: "correction", glucose_after: 250 }), meal_foods: [] }, // 加打 → 不計
+    ];
+    const r = classifyLanding(meals, SETTINGS);
+    expect(r.total).toBe(1);
+    expect(r.idealCount).toBe(1);
+    expect(r.highCount).toBe(0);
+  });
+
+  it("零碳水正餐（純肉/純蛋、有 meal_foods）仍計入", () => {
+    const meals = [
+      {
+        ...makeMeal({ id: "zeroCarb", total_carbs: 0, glucose_after: 250 }),
+        meal_foods: [makeMealFood({ meal_id: "zeroCarb", carbs: 0 })],
+      },
+    ];
+    const r = classifyLanding(meals, SETTINGS);
+    expect(r.total).toBe(1);
+    expect(r.highCount).toBe(1);
   });
 });

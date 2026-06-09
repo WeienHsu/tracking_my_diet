@@ -2,6 +2,7 @@
 
 import {
   foodLabel,
+  isCorrectionOnly,
   type Meal,
   type MealFood,
   type MealType,
@@ -107,12 +108,15 @@ export function landingOf(
 }
 
 export function classifyLanding(
-  meals: Meal[],
+  meals: (Meal & { meal_foods?: unknown[] })[],
   settings: Pick<Settings, "target_glucose_low" | "target_glucose_high">,
 ): LandingSummary {
   const { target_glucose_low: low, target_glucose_high: high } = settings;
-  // 只計入有餐後血糖的餐次。
-  const withAfter = meals.filter((m) => m.glucose_after != null);
+  // 只計入「有餐後血糖、且有實際進食」的餐次。
+  // 純補打事件（加打、無 meal_foods）即使填了事後血糖也排除，避免非正餐讀數混進理想率/餐後落點。
+  const withAfter = meals.filter(
+    (m) => m.glucose_after != null && !isCorrectionOnly(m),
+  );
 
   let idealCount = 0;
   let highCount = 0;
@@ -308,8 +312,10 @@ function usableForRegression(m: Meal): boolean {
   );
 }
 
-// ---- 階段 5.3：獨立乾淨餐（與「前一次任何進食」間隔 > minGapHours）----
-// 以全部餐次（含不正常餐）為進食事件來判定間隔；連續進食的後一餐視為受干擾，排除。
+// ---- 階段 5.3：獨立乾淨餐（與「前、後」最近一次進食事件間隔都 > minGapHours）----
+// 臨床乾淨餐標準：餐前穩定 + 餐後 3–4h 內無其他進食/補打/運動（見 docs/MULTI_MEAL_DATA_QUALITY_2026-06.md）。
+// 以全部餐次（含不正常餐、純補打）為進食事件來判定間隔。連續進食叢集「整段」排除——
+// 含叢集第一筆，因其餐後血糖會被後一餐的進食＋打針污染（forward isolation）。
 export function wellSpacedMeals(
   meals: Meal[],
   minGapHours: number = MIN_MEAL_GAP_HOURS,
@@ -317,14 +323,17 @@ export function wellSpacedMeals(
   const sorted = [...meals].sort(
     (a, b) => new Date(a.eaten_at).getTime() - new Date(b.eaten_at).getTime(),
   );
-  const out: Meal[] = [];
-  let prev: number | null = null;
-  for (const m of sorted) {
+  const gapMs = minGapHours * 3_600_000;
+  // 排序後最近的鄰居就是前一筆與後一筆；只要任一邊在 minGapHours 內就視為受干擾。
+  return sorted.filter((m, i) => {
     const t = new Date(m.eaten_at).getTime();
-    if (prev == null || (t - prev) / 3_600_000 > minGapHours) out.push(m);
-    prev = t; // 每一餐都是進食事件，無論是否納入。
-  }
-  return out;
+    const prevOk =
+      i === 0 || t - new Date(sorted[i - 1].eaten_at).getTime() > gapMs;
+    const nextOk =
+      i === sorted.length - 1 ||
+      new Date(sorted[i + 1].eaten_at).getTime() - t > gapMs;
+    return prevOk && nextOk;
+  });
 }
 
 // ---- 餐後讀數「有效量測窗」（方案 B′）----
