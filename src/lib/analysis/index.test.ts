@@ -389,18 +389,30 @@ describe("wellSpacedMeals（5.3）", () => {
         eaten_at: new Date(base + h * 3_600_000).toISOString(),
       }),
     );
-    // 間隔 0/1h/1h/3h，沒有任何一筆前後都 >4h → 全段排除（叢集第一餐的餐後血糖被後餐污染）。
+    // 間隔 0/1h/1h/3h：沒有任何一筆同時滿足「前一餐>4h、下一餐>3h」→ 全段排除。
     expect(wellSpacedMeals(meals)).toHaveLength(0);
   });
 
-  it("前後都 >4h 才算獨立：被後一餐拉近的第一筆也排除", () => {
+  it("非對稱門檻：下一餐 3.5h（>3h）的早餐留、午餐因前一餐 3.5h（<4h）仍排除", () => {
     const base = Date.UTC(2026, 0, 1, 8, 0, 0);
-    // 08:00 與 11:00（差 3h）→ 兩筆互相干擾，皆排除；隔日 08:00 前後都 >4h → 留。
+    // 早 08:00、午 11:30（隔 3.5h）、晚 隔日 → 早餐「下一餐 3.5h>3h」且無前一餐 → 留；
+    // 午餐「前一餐 3.5h<4h」baseline 不乾淨 → 排除；晚餐前後都夠遠 → 留。
+    const meals = [
+      makeMeal({ id: "breakfast", eaten_at: new Date(base).toISOString() }),
+      makeMeal({ id: "lunch", eaten_at: new Date(base + 3.5 * 3_600_000).toISOString() }),
+      makeMeal({ id: "dinner", eaten_at: dayIso(1) }),
+    ];
+    expect(wellSpacedMeals(meals).map((m) => m.id)).toEqual(["breakfast", "dinner"]);
+  });
+
+  it("下一餐剛好 3h（非 >3h）的第一筆仍排除（嚴格大於）", () => {
+    const base = Date.UTC(2026, 0, 1, 8, 0, 0);
     const meals = [
       makeMeal({ id: "a", eaten_at: new Date(base).toISOString() }),
       makeMeal({ id: "b", eaten_at: new Date(base + 3 * 3_600_000).toISOString() }),
       makeMeal({ id: "iso", eaten_at: dayIso(1) }),
     ];
+    // a 的下一餐剛好 3h，不 >3h → 排除；b 的前一餐 3h<4h → 排除；iso 前後都遠 → 留。
     expect(wellSpacedMeals(meals).map((m) => m.id)).toEqual(["iso"]);
   });
 

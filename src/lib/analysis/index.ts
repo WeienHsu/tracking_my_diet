@@ -69,7 +69,11 @@ export const MIN_MEALS_FOR_ESTIMATE = 3;
 export const ASSUMED_ISF_PER_ICR = 3.6;
 
 // 階段 5.3：餐次間隔須大於此小時數才算「獨立乾淨餐」，排除連續進食的雜訊。
+// 與「前一餐」的最小間隔：保護「餐前血糖 baseline 乾淨」（前餐升糖未退、前餐 IOB 殘留會汙染歸因），維持嚴格。
 export const MIN_MEAL_GAP_HOURS = 4;
+// 與「下一餐」的最小間隔：只需保護「餐後量測窗上限（180 分＝3h）」——下一餐晚於讀數時，這餐讀數仍乾淨。
+// 故較前向寬鬆（規律三餐時可救回早餐這類「讀數已量、之後才吃下一餐」的餐）。
+export const MIN_NEXT_MEAL_GAP_HOURS = 3;
 // 階段 5.2：每多一個時段啞變數，迴歸門檻就多要求這麼多筆，避免參數過多過擬合。
 export const DUMMY_MEALS_PER_PARAM = 5;
 // 階段 5.1：嶺迴歸（L2）的正則化強度係數（相對於特徵尺度）。
@@ -312,26 +316,28 @@ function usableForRegression(m: Meal): boolean {
   );
 }
 
-// ---- 階段 5.3：獨立乾淨餐（與「前、後」最近一次進食事件間隔都 > minGapHours）----
-// 臨床乾淨餐標準：餐前穩定 + 餐後 3–4h 內無其他進食/補打/運動（見 docs/MULTI_MEAL_DATA_QUALITY_2026-06.md）。
-// 以全部餐次（含不正常餐、純補打）為進食事件來判定間隔。連續進食叢集「整段」排除——
-// 含叢集第一筆，因其餐後血糖會被後一餐的進食＋打針污染（forward isolation）。
+// ---- 階段 5.3：獨立乾淨餐（與「前一餐」隔 >prevGap、與「下一餐」隔 >nextGap）----
+// 臨床乾淨餐標準：餐前穩定 + 餐後讀數不被下一餐切斷（見 docs/MULTI_MEAL_DATA_QUALITY_2026-06.md）。
+// 以全部餐次（含不正常餐、純補打）為進食事件來判定間隔。連續進食叢集「整段」排除。
+// 採非對稱門檻：前一餐須 >4h（baseline 乾淨，較嚴）；下一餐只須 >3h（保護餐後量測窗上限，較寬）。
 export function wellSpacedMeals(
   meals: Meal[],
-  minGapHours: number = MIN_MEAL_GAP_HOURS,
+  prevGapHours: number = MIN_MEAL_GAP_HOURS,
+  nextGapHours: number = MIN_NEXT_MEAL_GAP_HOURS,
 ): Meal[] {
   const sorted = [...meals].sort(
     (a, b) => new Date(a.eaten_at).getTime() - new Date(b.eaten_at).getTime(),
   );
-  const gapMs = minGapHours * 3_600_000;
-  // 排序後最近的鄰居就是前一筆與後一筆；只要任一邊在 minGapHours 內就視為受干擾。
+  const prevGapMs = prevGapHours * 3_600_000;
+  const nextGapMs = nextGapHours * 3_600_000;
+  // 排序後最近的鄰居就是前一筆與後一筆：前一筆 >prevGap 且 後一筆 >nextGap 才算獨立。
   return sorted.filter((m, i) => {
     const t = new Date(m.eaten_at).getTime();
     const prevOk =
-      i === 0 || t - new Date(sorted[i - 1].eaten_at).getTime() > gapMs;
+      i === 0 || t - new Date(sorted[i - 1].eaten_at).getTime() > prevGapMs;
     const nextOk =
       i === sorted.length - 1 ||
-      new Date(sorted[i + 1].eaten_at).getTime() - t > gapMs;
+      new Date(sorted[i + 1].eaten_at).getTime() - t > nextGapMs;
     return prevOk && nextOk;
   });
 }
